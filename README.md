@@ -118,7 +118,7 @@ The installer downloads current packages from official Arch mirrors. No default 
 
 ### Graphical installer
 
-![BifrOSt graphical installer welcome screen](screenshots/bifrost-installer-welcome.png)
+![BifrOSt graphical installer welcome screen](screenshots/bifrost-installer.png)
 
 ### Installed system
 
