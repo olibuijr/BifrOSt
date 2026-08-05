@@ -34,6 +34,10 @@
   "network_config": {
     "type": "nm"
   },
+  "custom_commands": [
+    "printf '%s\\n' 'is_IS.UTF-8 UTF-8' 'en_US.UTF-8 UTF-8' > /etc/locale.gen && locale-gen",
+    "printf '%s\\n' 'FONT=default8x16' 'KEYMAP=is-latin1' 'XKBLAYOUT=is,us' 'XKBMODEL=pc105' 'XKBOPTIONS=grp:win_space_toggle,terminate:ctrl_alt_bksp' > /etc/vconsole.conf"
+  ],
   "ntp": true,
   "packages": [
     "base-devel",
@@ -50,7 +54,8 @@
     "rust-analyzer",
     "rustup",
     "scx-scheds",
-    "scx-tools"
+    "scx-tools",
+    "snap-pac"
   ],
   "pacman_config": {
     "color": true,

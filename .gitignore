@@ -4,3 +4,4 @@ vm/
 *.iso
 *.qcow2
 *.log
+cmd_history.txt
