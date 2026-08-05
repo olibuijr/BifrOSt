@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+rm -f /etc/os-release
+install -Dm644 /usr/share/bifrost/os-release /etc/os-release

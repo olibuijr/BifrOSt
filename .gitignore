@@ -5,3 +5,6 @@ vm/
 *.qcow2
 *.log
 cmd_history.txt
+*.fd
+__pycache__/
+*.py[cod]

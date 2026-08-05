@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if (( EUID != 0 )); then
+    printf 'BifrOSt installer backend must run as root.\n' >&2
+    exit 1
+fi
+if (( $# != 2 )); then
+    printf 'Usage: bifrost-installer-backend CONFIG CREDENTIALS\n' >&2
+    exit 2
+fi
+
+readonly config=$1
+readonly credentials=$2
+readonly target=/mnt
+
+archinstall --config "$config" --creds "$credentials" --silent
+
+if ! mountpoint -q "$target" || [[ ! -d "$target/etc" ]]; then
+    printf 'BifrOSt: installed system is not mounted at %s.\n' "$target" >&2
+    exit 1
+fi
+
+install -Dm644 /usr/share/backgrounds/bifrost/bifrost-aurora.png \
+    "$target/usr/share/backgrounds/bifrost/bifrost-aurora.png"
+install -Dm644 /usr/share/bifrost/branding/bifrost-mark.svg \
+    "$target/usr/share/bifrost/branding/bifrost-mark.svg"
+install -Dm644 /usr/share/icons/hicolor/scalable/apps/bifrost.svg \
+    "$target/usr/share/icons/hicolor/scalable/apps/bifrost.svg"
+install -Dm644 /usr/share/bifrost/cosmic-background.ron \
+    "$target/usr/share/cosmic/com.system76.CosmicBackground/v1/all"
+rm -f "$target/etc/os-release"
+install -Dm644 /usr/share/bifrost/os-release "$target/etc/os-release"
+
+install -d "$target/usr/share/plymouth/themes" \
+    "$target/etc/plymouth" \
+    "$target/etc/systemd/system/plymouth-quit.service.d"
+cp -a /usr/share/plymouth/themes/bifrost "$target/usr/share/plymouth/themes/"
+install -m644 /etc/plymouth/plymouthd.conf "$target/etc/plymouth/plymouthd.conf"
+install -m644 /etc/systemd/system/plymouth-quit.service.d/bifrost.conf \
+    "$target/etc/systemd/system/plymouth-quit.service.d/bifrost.conf"
+
+readonly quiet_args='quiet splash loglevel=3 rd.systemd.show_status=auto systemd.show_status=auto rd.udev.log_level=3 udev.log_level=3 vt.global_cursor_default=0'
+shopt -s nullglob
+for entry in "$target"/boot/loader/entries/*.conf; do
+    grep -qw splash "$entry" || sed -i "/^options /s/$/ $quiet_args/" "$entry"
+done
+
+if ! grep -Eq '^HOOKS=.*[[:space:]]plymouth([[:space:]]|\))' "$target/etc/mkinitcpio.conf"; then
+    sed -Ei '/^HOOKS=/s/([[:space:]]kms)([[:space:]])/\1 plymouth\2/' "$target/etc/mkinitcpio.conf"
+fi
+if ! grep -Eq '^HOOKS=.*[[:space:]]plymouth([[:space:]]|\))' "$target/etc/mkinitcpio.conf"; then
+    sed -Ei '/^HOOKS=/s/([[:space:]]udev)([[:space:]])/\1 plymouth\2/' "$target/etc/mkinitcpio.conf"
+fi
+arch-chroot "$target" mkinitcpio -P

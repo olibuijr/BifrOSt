@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">BifrOSt mark</title>
+  <desc id="desc">A geometric basalt shield crossed by a luminous Bifröst bridge.</desc>
+  <defs>
+    <linearGradient id="shield" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#14283d"/>
+      <stop offset="1" stop-color="#07111f"/>
+    </linearGradient>
+    <linearGradient id="bridge" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#35f2c1"/>
+      <stop offset="0.48" stop-color="#7ad7ff"/>
+      <stop offset="0.76" stop-color="#9b7cff"/>
+      <stop offset="1" stop-color="#f4b85e"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="9" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <path d="M256 24 447 134v220L256 464 65 354V134Z" fill="url(#shield)" stroke="#28455d" stroke-width="12"/>
+  <path d="M108 291c40-122 120-183 240-183 27 0 52 3 76 10" fill="none" stroke="#35f2c1" stroke-opacity=".22" stroke-width="42" filter="url(#glow)"/>
+  <path d="M108 291c40-122 120-183 240-183 27 0 52 3 76 10" fill="none" stroke="url(#bridge)" stroke-width="22" stroke-linecap="round"/>
+  <path d="M178 371V171h73c74 0 103 84 43 116l-43 23h-73m73-139-73 93m73 46 73 61" fill="none" stroke="#eefaff" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m256 70 12 25 28 4-20 20 5 28-25-13-25 13 5-28-20-20 28-4Z" fill="#f4b85e"/>
+  <circle cx="108" cy="291" r="10" fill="#35f2c1"/>
+  <circle cx="424" cy="118" r="10" fill="#f4b85e"/>
+</svg>

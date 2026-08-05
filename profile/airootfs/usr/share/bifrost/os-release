@@ -1,0 +1,11 @@
+NAME="BifrOSt"
+PRETTY_NAME="BifrOSt 0.1 (Arch-based)"
+ID=bifrost
+ID_LIKE=arch
+BUILD_ID=rolling
+VERSION="0.1 (rolling)"
+VERSION_ID=0.1
+ANSI_COLOR="38;2;53;242;193"
+LOGO=bifrost
+IMAGE_ID=bifrost
+IMAGE_VERSION=0.1

@@ -1,0 +1,331 @@
+#!/usr/bin/env python3
+import json
+import os
+import re
+import secrets
+import subprocess
+import tempfile
+import threading
+from pathlib import Path
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk
+
+BASE_CONFIG = Path("/usr/share/bifrost/archinstall.json")
+
+CSS = b"""
+window { background: #07111f; color: #eef7ff; }
+.hero { background: #0a1728; padding: 44px; }
+.hero-title { font-size: 34px; font-weight: 800; }
+.hero-subtitle { font-size: 16px; color: #a9bfd2; }
+.step-title { font-size: 26px; font-weight: 750; }
+.step-copy { color: #a9bfd2; font-size: 15px; }
+.card { background: #0e1d30; border: 1px solid #203a53; border-radius: 14px; padding: 22px; }
+.disk-row { background: #10243a; border-radius: 10px; padding: 14px; }
+.warning { background: #39231f; border: 1px solid #9a513b; border-radius: 10px; padding: 14px; color: #ffd8ca; }
+.install-button { background: #e76f51; color: #08111e; font-weight: 800; }
+.install-button:hover { background: #f58a6b; }
+.accent { color: #65d8ff; }
+progressbar trough { min-height: 8px; background: #182c42; }
+progressbar progress { background: #65d8ff; }
+"""
+
+
+def human_size(value):
+    size = float(value)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1000 or unit == "TB":
+            return f"{size:.1f} {unit}"
+        size /= 1000
+
+
+def available_disks():
+    result = subprocess.run(
+        ["lsblk", "--bytes", "--json", "--output", "NAME,PATH,SIZE,MODEL,TYPE,RO,RM,MOUNTPOINTS"],
+        check=True, capture_output=True, text=True,
+    )
+    disks = []
+    for item in json.loads(result.stdout)["blockdevices"]:
+        mounts = [m for m in item.get("mountpoints", []) if m]
+        if item["type"] == "disk" and not item.get("ro") and not item.get("rm") and not mounts:
+            disks.append(item)
+    return disks
+
+
+def password_hash(password):
+    salt = secrets.token_urlsafe(12).replace("-", "").replace("_", "")[:16]
+    return subprocess.run(
+        ["openssl", "passwd", "-6", "-salt", salt, "-stdin"],
+        input=password + "\n", text=True, capture_output=True, check=True,
+    ).stdout.strip()
+
+
+class InstallerWindow(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Setja upp BifrOSt")
+        self.set_default_size(1040, 700)
+        self.set_size_request(860, 620)
+        self.disks = available_disks()
+        self.page_index = 0
+        self.installing = False
+
+        self.toast_overlay = Adw.ToastOverlay()
+        self.set_content(self.toast_overlay)
+        shell = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.toast_overlay.set_child(shell)
+
+        hero = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        hero.add_css_class("hero")
+        hero.set_size_request(330, -1)
+        shell.append(hero)
+        mark = Gtk.Image.new_from_file("/usr/share/bifrost/branding/bifrost-mark.svg")
+        mark.set_pixel_size(96)
+        mark.set_halign(Gtk.Align.START)
+        hero.append(mark)
+        brand = Gtk.Label(label="BifrOSt", xalign=0)
+        brand.add_css_class("hero-title")
+        hero.append(brand)
+        desc = Gtk.Label(label="Íslenskt, frjálst og byggt fyrir þig.", xalign=0, wrap=True)
+        desc.add_css_class("hero-subtitle")
+        hero.append(desc)
+        hero.append(Gtk.Box(vexpand=True))
+        self.step_label = Gtk.Label(label="Skref 1 af 4", xalign=0)
+        self.step_label.add_css_class("accent")
+        hero.append(self.step_label)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        content.set_margin_top(34); content.set_margin_bottom(28)
+        content.set_margin_start(42); content.set_margin_end(42)
+        content.set_hexpand(True)
+        shell.append(content)
+
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.SLIDE_LEFT_RIGHT, transition_duration=260)
+        self.stack.set_vexpand(True)
+        content.append(self.stack)
+        self._welcome_page(); self._disk_page(); self._identity_page(); self._review_page(); self._progress_page()
+
+        self.nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.append(self.nav)
+        self.back = Gtk.Button(label="Til baka")
+        self.back.connect("clicked", self._go_back)
+        self.nav.append(self.back)
+        self.nav.append(Gtk.Box(hexpand=True))
+        self.next = Gtk.Button(label="Halda áfram")
+        self.next.add_css_class("suggested-action")
+        self.next.connect("clicked", self._go_next)
+        self.nav.append(self.next)
+        self._show_page(0)
+
+    def _heading(self, title, copy):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        title_label = Gtk.Label(label=title, xalign=0, wrap=True)
+        title_label.add_css_class("step-title")
+        copy_label = Gtk.Label(label=copy, xalign=0, wrap=True)
+        copy_label.add_css_class("step-copy")
+        box.append(title_label); box.append(copy_label)
+        return box
+
+    def _welcome_page(self):
+        page = self._heading("Velkomin í BifrOSt", "Uppsetningin tekur aðeins nokkur skref. Þú velur disk og notanda; BifrOSt sér um restina.")
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        card.add_css_class("card")
+        card.set_margin_top(26)
+        for icon, title, text in [
+            ("preferences-desktop-keyboard-symbolic", "Íslenskt frá fyrstu ræsingu", "Tungumál, lyklaborð og tímabelti eru rétt stillt."),
+            ("applications-development-symbolic", "Tilbúið fyrir þróun", "Rust, Clang, Podman og nauðsynleg verkfæri fylgja."),
+            ("security-high-symbolic", "Öruggur Arch grunnur", "Opinberir pakkar og venjulegar Arch uppfærslur."),
+        ]:
+            row = Gtk.Box(spacing=14)
+            row.append(Gtk.Image.new_from_icon_name(icon))
+            labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+            labels.append(Gtk.Label(label=title, xalign=0, css_classes=["heading"]))
+            labels.append(Gtk.Label(label=text, xalign=0, wrap=True, css_classes=["dim-label"]))
+            row.append(labels); card.append(row)
+        page.append(card)
+        self.stack.add_named(page, "welcome")
+
+    def _disk_page(self):
+        page = self._heading("Hvar á að setja BifrOSt?", "Veldu heilan disk. Öllum gögnum á valda disknum verður eytt.")
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        card.add_css_class("card"); card.set_margin_top(22)
+        self.disk_combo = Gtk.DropDown()
+        labels = [f"{d.get('model') or d['name']} — {human_size(d['size'])} ({d['path']})" for d in self.disks]
+        self.disk_combo.set_model(Gtk.StringList.new(labels or ["Enginn hentugur diskur fannst"]))
+        self.disk_combo.set_sensitive(bool(self.disks))
+        card.append(self.disk_combo)
+        note = Gtk.Label(label="Hreint Btrfs kerfi, EFI ræsing og þjöppuð zram swap verða útbúin sjálfkrafa.", xalign=0, wrap=True)
+        note.add_css_class("dim-label"); card.append(note)
+        page.append(card)
+        warn = Gtk.Label(label="Varúð: Þetta er eyðandi aðgerð. Afritaðu mikilvæg gögn áður en þú heldur áfram.", xalign=0, wrap=True)
+        warn.add_css_class("warning"); warn.set_margin_top(16); page.append(warn)
+        self.stack.add_named(page, "disk")
+
+    def _entry_row(self, label, entry):
+        row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        row.append(Gtk.Label(label=label, xalign=0)); row.append(entry)
+        return row
+
+    def _identity_page(self):
+        page = self._heading("Stofnaðu notandann þinn", "Þessi aðgangur fær stjórnandaréttindi og verður notaður til daglegra starfa.")
+        grid = Gtk.Grid(column_spacing=16, row_spacing=14)
+        grid.add_css_class("card"); grid.set_margin_top(20)
+        self.fullname = Gtk.Entry(placeholder_text="Fullt nafn")
+        self.username = Gtk.Entry(placeholder_text="notandanafn")
+        self.hostname = Gtk.Entry(text="bifrost", placeholder_text="tölvuheiti")
+        self.password = Gtk.PasswordEntry(show_peek_icon=True)
+        self.password2 = Gtk.PasswordEntry(show_peek_icon=True)
+        grid.attach(self._entry_row("Nafn", self.fullname), 0, 0, 1, 1)
+        grid.attach(self._entry_row("Notandanafn", self.username), 1, 0, 1, 1)
+        grid.attach(self._entry_row("Lykilorð", self.password), 0, 1, 1, 1)
+        grid.attach(self._entry_row("Staðfesta lykilorð", self.password2), 1, 1, 1, 1)
+        grid.attach(self._entry_row("Heiti tölvu", self.hostname), 0, 2, 2, 1)
+        page.append(grid)
+        self.stack.add_named(page, "identity")
+
+    def _review_page(self):
+        page = self._heading("Tilbúið til uppsetningar", "Farðu yfir valið. Eftir að uppsetning hefst er ekki hægt að hætta án þess að skilja diskinn eftir breyttan.")
+        self.summary = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
+        self.summary.add_css_class("card"); self.summary.set_margin_top(20)
+        page.append(self.summary)
+        self.confirm = Gtk.CheckButton(label="Ég skil að öllum gögnum á valda disknum verður eytt.")
+        self.confirm.set_margin_top(16); self.confirm.connect("toggled", self._confirm_changed)
+        page.append(self.confirm)
+        self.stack.add_named(page, "review")
+
+    def _progress_page(self):
+        page = self._heading("Set BifrOSt upp", "Sækir pakka og útbýr nýja kerfið. Þetta getur tekið nokkrar mínútur.")
+        self.progress = Gtk.ProgressBar(show_text=True)
+        self.progress.set_text("Undirbý uppsetningu…")
+        self.progress.set_margin_top(40); page.append(self.progress)
+        self.status = Gtk.Label(label="Ekki slökkva á tölvunni.", xalign=0, wrap=True)
+        self.status.add_css_class("step-copy"); self.status.set_margin_top(16); page.append(self.status)
+        self.stack.add_named(page, "progress")
+
+    def _toast(self, text):
+        self.toast_overlay.add_toast(Adw.Toast(title=text, timeout=4))
+
+    def _show_page(self, index):
+        names = ["welcome", "disk", "identity", "review", "progress"]
+        self.page_index = index
+        self.stack.set_visible_child_name(names[index])
+        self.step_label.set_label(f"Skref {min(index + 1, 4)} af 4")
+        self.back.set_visible(index > 0 and index < 4)
+        self.next.set_visible(index < 4)
+        self.next.set_label("Setja upp BifrOSt" if index == 3 else "Halda áfram")
+        self.next.remove_css_class("install-button")
+        if index == 3:
+            self.next.add_css_class("install-button")
+            self.next.set_sensitive(self.confirm.get_active())
+        else:
+            self.next.set_sensitive(True)
+
+    def _go_back(self, _button):
+        if not self.installing and self.page_index > 0:
+            self._show_page(self.page_index - 1)
+
+    def _validate_identity(self):
+        username = self.username.get_text().strip()
+        hostname = self.hostname.get_text().strip()
+        if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", username):
+            self._toast("Notandanafn má aðeins innihalda lágstafi, tölur, _ og -."); return False
+        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9.-]{0,62}", hostname):
+            self._toast("Ógilt tölvuheiti."); return False
+        if len(self.password.get_text()) < 8:
+            self._toast("Lykilorð þarf að vera að minnsta kosti 8 stafir."); return False
+        if self.password.get_text() != self.password2.get_text():
+            self._toast("Lykilorðin passa ekki saman."); return False
+        return True
+
+    def _go_next(self, _button):
+        if self.page_index == 1 and not self.disks:
+            self._toast("Enginn auður uppsetningardiskur fannst."); return
+        if self.page_index == 2 and not self._validate_identity():
+            return
+        if self.page_index == 2:
+            disk = self.disks[self.disk_combo.get_selected()]
+            self.summary.set_markup(
+                f"<b>Diskur</b>\n{GLib.markup_escape_text(disk.get('model') or disk['name'])} — {human_size(disk['size'])}\n\n"
+                f"<b>Notandi</b>\n{GLib.markup_escape_text(self.fullname.get_text() or self.username.get_text())} ({GLib.markup_escape_text(self.username.get_text())})\n\n"
+                f"<b>Tölva</b>\n{GLib.markup_escape_text(self.hostname.get_text())}\n\n"
+                "<b>Stillingar</b>\nÍslenska · Atlantic/Reykjavik · COSMIC · Btrfs"
+            )
+        if self.page_index == 3:
+            self._start_install(); return
+        self._show_page(self.page_index + 1)
+
+    def _confirm_changed(self, button):
+        if self.page_index == 3:
+            self.next.set_sensitive(button.get_active())
+
+    def _start_install(self):
+        self.installing = True
+        self._show_page(4)
+        self.nav.set_visible(False)
+        self.progress.pulse()
+        GLib.timeout_add(500, self._pulse)
+        threading.Thread(target=self._install_worker, daemon=True).start()
+
+    def _pulse(self):
+        if self.installing:
+            self.progress.pulse(); return GLib.SOURCE_CONTINUE
+        return GLib.SOURCE_REMOVE
+
+    def _install_worker(self):
+        try:
+            config = json.loads(BASE_CONFIG.read_text())
+            selected_disk = self.disks[self.disk_combo.get_selected()]
+            disk = selected_disk["path"]
+            root_start_sectors = 1025 * 1024 * 1024 // 512
+            root_length_sectors = (
+                (int(selected_disk["size"]) // 512 - root_start_sectors - 34) // 2048
+            ) * 2048
+            config["hostname"] = self.hostname.get_text().strip()
+            config["disk_config"] = {
+                "config_type": "default_layout",
+                "device_modifications": [{"device": disk, "wipe": True, "partitions": [
+                    {"btrfs": [], "dev_path": None, "flags": ["boot", "esp"], "fs_type": "fat32", "mount_options": [], "mountpoint": "/boot", "obj_id": "bifrost-efi", "size": {"unit": "MiB", "value": 1024, "sector_size": {"unit": "B", "value": 512}}, "start": {"unit": "MiB", "value": 1, "sector_size": {"unit": "B", "value": 512}}, "status": "create", "type": "primary"},
+                    {"btrfs": [{"mountpoint": "/", "name": "@"}, {"mountpoint": "/home", "name": "@home"}, {"mountpoint": "/var/log", "name": "@log"}, {"mountpoint": "/.snapshots", "name": "@snapshots"}], "dev_path": None, "flags": [], "fs_type": "btrfs", "mount_options": ["compress=zstd"], "mountpoint": None, "obj_id": "bifrost-root", "size": {"unit": "sectors", "value": root_length_sectors, "sector_size": {"unit": "B", "value": 512}}, "start": {"unit": "sectors", "value": root_start_sectors, "sector_size": {"unit": "B", "value": 512}}, "status": "create", "type": "primary"}
+                ]}]
+            }
+            creds = {"users": [{"username": self.username.get_text().strip(), "sudo": True, "enc_password": password_hash(self.password.get_text())}]}
+            with tempfile.TemporaryDirectory(prefix="bifrost-installer-") as tmp:
+                config_path = Path(tmp) / "config.json"; creds_path = Path(tmp) / "creds.json"
+                config_path.write_text(json.dumps(config)); creds_path.write_text(json.dumps(creds))
+                os.chmod(config_path, 0o600); os.chmod(creds_path, 0o600)
+                proc = subprocess.run(["sudo", "/usr/local/lib/bifrost-installer-backend", str(config_path), str(creds_path)], text=True, capture_output=True)
+                if proc.returncode:
+                    raise RuntimeError((proc.stderr or proc.stdout)[-1200:] or f"Villa {proc.returncode}")
+            GLib.idle_add(self._install_done)
+        except Exception as exc:
+            GLib.idle_add(self._install_failed, str(exc))
+
+    def _install_done(self):
+        self.installing = False
+        self.progress.set_fraction(1); self.progress.set_text("Uppsetningu lokið")
+        self.status.set_markup("<b>BifrOSt er tilbúið.</b> Fjarlægðu uppsetningarmiðilinn og endurræstu tölvuna.")
+
+    def _install_failed(self, error):
+        self.installing = False
+        self.progress.set_fraction(0); self.progress.set_text("Uppsetning mistókst")
+        self.status.set_text(error)
+        self._toast("Uppsetning mistókst. Nánari upplýsingar birtast á skjánum.")
+
+
+class InstallerApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="is.bifrost.Installer")
+
+    def do_startup(self):
+        Adw.Application.do_startup(self)
+        provider = Gtk.CssProvider(); provider.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    def do_activate(self):
+        window = self.props.active_window or InstallerWindow(self)
+        window.present()
+
+
+if __name__ == "__main__":
+    raise SystemExit(InstallerApp().run())

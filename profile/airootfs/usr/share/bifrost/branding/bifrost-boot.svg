@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-labelledby="title desc">
+  <title id="title">BifrOSt boot artwork</title>
+  <desc id="desc">A basalt shield beneath an aurora bridge over Icelandic peaks.</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#030812"/><stop offset="1" stop-color="#102d42"/></linearGradient>
+    <linearGradient id="bridge" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#35f2c1"/><stop offset=".52" stop-color="#7ad7ff"/><stop offset=".78" stop-color="#9b7cff"/><stop offset="1" stop-color="#f4b85e"/></linearGradient>
+    <filter id="glow" x="-40%" y="-70%" width="180%" height="240%"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="640" height="480" fill="url(#sky)"/>
+  <g fill="#dff9ff" opacity=".7"><circle cx="62" cy="58" r="1.5"/><circle cx="128" cy="112" r="1"/><circle cx="224" cy="48" r="1.5"/><circle cx="397" cy="79" r="1"/><circle cx="533" cy="42" r="1.5"/><circle cx="592" cy="132" r="1"/></g>
+  <path d="M-35 305C105 70 290 45 460 131c81 41 142 32 224-24" fill="none" stroke="url(#bridge)" stroke-opacity=".34" stroke-width="34" stroke-linecap="round" filter="url(#glow)"/>
+  <path d="M-35 305C105 70 290 45 460 131c81 41 142 32 224-24" fill="none" stroke="url(#bridge)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M0 337 72 294l50 13 71-81 46 43 74-103 49 107 80-75 51 91 65-54 82 70v82H0Z" fill="#0a1724"/>
+  <path d="m72 294 50 13 71-81 46 43 74-103 49 107 80-75 51 91 65-54 82 70v35H0v-3Z" fill="#acdce8" opacity=".55"/>
+  <g transform="translate(252 112)">
+    <path d="m68 0 74 43v85l-74 43-74-43V43Z" fill="#07111f" stroke="#2b4b65" stroke-width="5"/>
+    <path d="M10 103c16-48 48-72 95-72 11 0 21 1 31 4" fill="none" stroke="url(#bridge)" stroke-width="9" stroke-linecap="round"/>
+    <path d="M38 140V61h29c30 0 42 34 18 46l-18 10H38m29-56-29 37m29 19 29 23" fill="none" stroke="#eefaff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="320" y="340" text-anchor="middle" fill="#f3fbff" font-family="Noto Sans, sans-serif" font-size="52" font-weight="700" letter-spacing="2">Bifr<tspan fill="#f4b85e">OS</tspan>t</text>
+  <text x="320" y="378" text-anchor="middle" fill="#9dc4d3" font-family="Noto Sans, sans-serif" font-size="14" font-weight="600" letter-spacing="4">ÍSLENSKT · FRJÁLST · ARCH-BASED</text>
+  <path d="M145 407h350" stroke="#31566d" stroke-width="2"/>
+  <text x="320" y="438" text-anchor="middle" fill="#7195a5" font-family="Noto Sans, sans-serif" font-size="12" letter-spacing="2">BRÚ ELDS OG ÍSS</text>
+</svg>
