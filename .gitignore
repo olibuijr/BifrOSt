@@ -1,0 +1,6 @@
+out/
+work/
+vm/
+*.iso
+*.qcow2
+*.log
