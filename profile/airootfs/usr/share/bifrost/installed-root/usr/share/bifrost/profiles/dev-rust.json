@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "id": "dev-rust",
+  "packages": [
+    "base-devel",
+    "clang",
+    "cmake",
+    "git",
+    "just",
+    "lld",
+    "ninja",
+    "rust-analyzer",
+    "rustup"
+  ]
+}

@@ -1,0 +1,30 @@
+BifrOSt recovery and logs
+
+Safe first steps
+1. Stop if a disk is making unusual noises or repeatedly disconnecting.
+2. Do not format, repair, reinstall, or restore onto a disk before preserving important data.
+3. Run bifrost-recovery-info. It only reads system identity, root-device, installation-record, and log metadata.
+4. Save relevant logs to another disk before changing the system.
+
+Where to look
+- Installer logs retained by BifrOSt: /var/log/bifrost-installer/
+- Current boot journal: journalctl -b
+- Previous boot journal, when retained: journalctl -b -1
+- Failed system services: systemctl --failed
+- Failed user services: systemctl --user --failed
+- Root storage layout: lsblk -f
+- Btrfs subvolumes (read-only listing): sudo btrfs subvolume list /
+
+Encryption
+The installation record and bifrost-recovery-info show whether encryption was selected or detected. They do not unlock a disk or reveal any passphrase. Keep the recovery key or passphrase outside the computer.
+
+Updates
+BifrOSt uses Arch Linux rolling updates. Use a complete sudo pacman -Syu transaction. Do not perform partial upgrades. If an update is interrupted, collect the journal and pacman log before attempting repairs.
+
+Limits
+Logs and Btrfs subvolume discovery help diagnosis. Their presence does not mean an automatic or bootable rollback exists. Verify backups before any destructive recovery action.
+
+From the live system
+The installed-root payload can be read without installation. Run:
+  /usr/share/bifrost/installed-root/usr/bin/bifrost-recovery-info --language en
+The live environment may report its own root device unless the installed system is mounted and inspected explicitly.

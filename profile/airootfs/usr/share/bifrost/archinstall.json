@@ -17,7 +17,7 @@
   },
   "bootloader_config": {
     "bootloader": "Systemd-boot",
-    "removable": true,
+    "removable": false,
     "uki": false
   },
   "hostname": "bifrost",
@@ -34,30 +34,8 @@
   "network_config": {
     "type": "nm"
   },
-  "custom_commands": [
-    "printf '%s\\n' 'is_IS.UTF-8 UTF-8' 'en_US.UTF-8 UTF-8' > /etc/locale.gen && locale-gen",
-    "printf '%s\\n' 'FONT=default8x16' 'KEYMAP=is-latin1' 'XKBLAYOUT=is,us' 'XKBMODEL=pc105' 'XKBOPTIONS=grp:win_space_toggle,terminate:ctrl_alt_bksp' > /etc/vconsole.conf"
-  ],
   "ntp": true,
-  "packages": [
-    "base-devel",
-    "clang",
-    "cmake",
-    "distrobox",
-    "firefox",
-    "firefox-i18n-is",
-    "git",
-    "just",
-    "lld",
-    "ninja",
-    "podman",
-    "plymouth",
-    "rust-analyzer",
-    "rustup",
-    "scx-scheds",
-    "scx-tools",
-    "snap-pac"
-  ],
+  "packages": [],
   "pacman_config": {
     "color": true,
     "parallel_downloads": 5
@@ -76,6 +54,7 @@
     }
   },
   "script": "guided",
+  "services": [],
   "swap": {
     "algorithm": "zstd",
     "enabled": true

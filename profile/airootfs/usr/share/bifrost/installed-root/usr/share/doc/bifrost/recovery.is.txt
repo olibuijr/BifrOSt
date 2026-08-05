@@ -1,0 +1,30 @@
+Endurheimt og atvikaskrár BifrOSt
+
+Örugg fyrstu skref
+1. Stöðvaðu vinnu ef diskur gefur frá sér óvenjuleg hljóð eða aftengist ítrekað.
+2. Ekki forsníða, gera við, setja upp aftur eða endurheimta á disk áður en mikilvæg gögn hafa verið varðveitt.
+3. Keyrðu bifrost-recovery-info. Forritið les aðeins auðkenni kerfis, rótartæki, uppsetningarskrá og lýsigögn atvikaskráa.
+4. Vistaðu mikilvægar atvikaskrár á öðrum diski áður en kerfinu er breytt.
+
+Hvar á að leita
+- Uppsetningarskrár sem BifrOSt varðveitir: /var/log/bifrost-installer/
+- Kerfisdagbók núverandi ræsingar: journalctl -b
+- Kerfisdagbók fyrri ræsingar, ef varðveitt: journalctl -b -1
+- Bilaðar kerfisþjónustur: systemctl --failed
+- Bilaðar notendaþjónustur: systemctl --user --failed
+- Skipulag rótargeymslu: lsblk -f
+- Btrfs undireiningar (aðeins listun): sudo btrfs subvolume list /
+
+Dulkóðun
+Uppsetningarskráin og bifrost-recovery-info sýna hvort dulkóðun var valin eða fannst. Þau aflæsa ekki diski og birta aldrei lykilorð. Geymdu endurheimtarlykil eða lykilorð utan tölvunnar.
+
+Uppfærslur
+BifrOSt notar samfelldar Arch Linux uppfærslur. Keyrðu alltaf heila sudo pacman -Syu færslu. Ekki gera hlutauppfærslur. Ef uppfærsla rofnar skaltu varðveita kerfisdagbókina og pacman-skrána áður en viðgerð er reynd.
+
+Takmörk
+Atvikaskrár og listun Btrfs undireininga hjálpa við greiningu. Tilvist þeirra merkir ekki að sjálfvirk eða ræsanleg afturköllun sé í boði. Staðfestu afrit áður en nokkur eyðandi endurheimtaraðgerð er framkvæmd.
+
+Úr prufukerfinu
+Hægt er að lesa installed-root gögnin án uppsetningar. Keyrðu:
+  /usr/share/bifrost/installed-root/usr/bin/bifrost-recovery-info --language is
+Prufukerfið kann að sýna sitt eigið rótartæki nema uppsetta kerfið sé tengt og skoðað sérstaklega.

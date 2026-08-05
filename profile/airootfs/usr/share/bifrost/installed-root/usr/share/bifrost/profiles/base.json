@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "id": "base",
+  "packages": [
+    "btrfs-progs",
+    "cryptsetup",
+    "firefox",
+    "firefox-i18n-is",
+    "fwupd",
+    "gtk4",
+    "libadwaita",
+    "linux-firmware",
+    "networkmanager",
+    "noto-fonts",
+    "noto-fonts-emoji",
+    "plymouth",
+    "python-gobject"
+  ]
+}

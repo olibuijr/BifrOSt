@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "id": "dev-python",
+  "packages": [
+    "base-devel",
+    "git",
+    "python-pip",
+    "python-pipx",
+    "python-virtualenv"
+  ]
+}

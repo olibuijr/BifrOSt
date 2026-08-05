@@ -1,11 +1,28 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034
 
+bifrost_version="0.2.0"
+source_date_epoch="${SOURCE_DATE_EPOCH:-0}"
+if [[ ! "${source_date_epoch}" =~ ^[0-9]+$ ]]; then
+    printf 'profiledef.sh: SOURCE_DATE_EPOCH must be a non-negative integer\n' >&2
+    return 1
+fi
+if ! iso_build_date="$(date -u --date="@${source_date_epoch}" +%Y%m%d)"; then
+    printf 'profiledef.sh: SOURCE_DATE_EPOCH is outside the supported date range\n' >&2
+    return 1
+fi
+if [[ ! "${iso_build_date}" =~ ^[0-9]{8}$ ]]; then
+    printf 'profiledef.sh: SOURCE_DATE_EPOCH must resolve to a four-digit year\n' >&2
+    return 1
+fi
+iso_version_token="${bifrost_version^^}"
+iso_version_token="${iso_version_token//[^A-Z0-9]/}"
+
 iso_name="bifrost"
-iso_label="BIFROST_$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%y%m)"
+iso_label="BIFROST_${iso_version_token:0:12}_${iso_build_date}"
 iso_publisher="BifrOSt project"
 iso_application="BifrOSt Icelandic developer live/install ISO"
-iso_version="$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y.%m.%d)"
+iso_version="${bifrost_version}"
 install_dir="bifrost"
 buildmodes=('iso')
 bootmodes=('bios.syslinux'

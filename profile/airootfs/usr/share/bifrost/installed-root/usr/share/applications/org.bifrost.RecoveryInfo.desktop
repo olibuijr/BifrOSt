@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=BifrOSt Recovery Information
+Name[is]=Endurheimtarupplýsingar BifrOSt
+Comment=Read-only system and recovery discovery
+Comment[is]=Skoða kerfis- og endurheimtarupplýsingar án breytinga
+Exec=bifrost-recovery-info
+TryExec=bifrost-recovery-info
+Icon=utilities-system-monitor-symbolic
+Terminal=true
+Categories=System;Utility;
