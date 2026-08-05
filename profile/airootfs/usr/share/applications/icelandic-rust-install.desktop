@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Setja upp kerfið
+Name[en]=Install the system
+Comment=Setja upp íslenskt Rust-first Arch kerfi
+Comment[en]=Install the Icelandic Rust-first Arch system
+Exec=cosmic-term -e sudo archinstall --config /usr/share/icelandic-rust/archinstall.json
+Icon=system-software-install
+Terminal=false
+Categories=System;
+Keywords=install;installer;uppsetning;
+StartupNotify=true

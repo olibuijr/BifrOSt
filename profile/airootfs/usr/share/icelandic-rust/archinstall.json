@@ -1,0 +1,78 @@
+{
+  "archinstall-language": "English",
+  "app_config": {
+    "audio_config": {
+      "audio": "pipewire"
+    },
+    "fonts_config": {
+      "fonts": [
+        "noto-fonts",
+        "noto-fonts-emoji",
+        "ttf-dejavu"
+      ]
+    },
+    "power_management_config": {
+      "power_management": "power-profiles-daemon"
+    }
+  },
+  "bootloader_config": {
+    "bootloader": "Systemd-boot",
+    "removable": true,
+    "uki": false
+  },
+  "hostname": "icelandic-rust",
+  "kernels": [
+    "linux",
+    "linux-lts"
+  ],
+  "locale_config": {
+    "console_font": "default8x16",
+    "kb_layout": "is-latin1",
+    "sys_enc": "UTF-8",
+    "sys_lang": "is_IS.UTF-8"
+  },
+  "network_config": {
+    "type": "nm"
+  },
+  "ntp": true,
+  "packages": [
+    "base-devel",
+    "clang",
+    "cmake",
+    "distrobox",
+    "firefox",
+    "firefox-i18n-is",
+    "git",
+    "just",
+    "lld",
+    "ninja",
+    "podman",
+    "rust-analyzer",
+    "rustup",
+    "scx-scheds",
+    "scx-tools"
+  ],
+  "pacman_config": {
+    "color": true,
+    "parallel_downloads": 5
+  },
+  "profile_config": {
+    "gfx_driver": "All open-source",
+    "greeter": "cosmic-greeter",
+    "profile": {
+      "custom_settings": {
+        "Cosmic": {}
+      },
+      "details": [
+        "Cosmic"
+      ],
+      "main": "Desktop"
+    }
+  },
+  "script": "guided",
+  "swap": {
+    "algorithm": "zstd",
+    "enabled": true
+  },
+  "timezone": "Atlantic/Reykjavik"
+}
