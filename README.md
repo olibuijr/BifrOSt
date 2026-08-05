@@ -33,6 +33,36 @@ Disks, or Rufus. Back up the destination drive first; imaging erases it.
 - Snapper plus `snap-pac` for package-transaction snapshots on supported Btrfs layouts
 
 BifrOSt uses official Arch repositories only. It does not replace pacman, ship a custom kernel, or enable the AUR automatically.
+
+## Icelandic desktop translations
+
+BifrOSt drives the COSMIC desktop toward complete Icelandic coverage. The
+project completed the Icelandic (`is_IS`) localization of the core COSMIC
+components to full parity with English and contributed the work upstream to
+System76, so every COSMIC user benefits — not just BifrOSt. Terminology is
+grounded in the [Íðorðabankinn](https://idordabanki.arnastofnun.is/) TOLVA
+computing dictionary and kept consistent with COSMIC's existing Icelandic
+strings.
+
+Upstream pull requests (each bringing a component to 100% key parity):
+
+| Component | Pull request |
+| --- | --- |
+| cosmic-settings | [#2136](https://github.com/pop-os/cosmic-settings/pull/2136) |
+| cosmic-applets | [#1517](https://github.com/pop-os/cosmic-applets/pull/1517) |
+| cosmic-term | [#897](https://github.com/pop-os/cosmic-term/pull/897) |
+| cosmic-files | [#1958](https://github.com/pop-os/cosmic-files/pull/1958) |
+| cosmic-player | [#319](https://github.com/pop-os/cosmic-player/pull/319) |
+| cosmic-initial-setup | [#147](https://github.com/pop-os/cosmic-initial-setup/pull/147) |
+| cosmic-store | [#587](https://github.com/pop-os/cosmic-store/pull/587) |
+| cosmic-greeter | [#508](https://github.com/pop-os/cosmic-greeter/pull/508) |
+| cosmic-edit | [#605](https://github.com/pop-os/cosmic-edit/pull/605) |
+| cosmic-osd | [#214](https://github.com/pop-os/cosmic-osd/pull/214) |
+
+Because COSMIC embeds translations into its binaries at build time, these
+strings appear in BifrOSt automatically once the pull requests merge and the
+official Arch `cosmic` packages are rebuilt — no profile changes required.
+
 ## Screenshots
 
 ### Graphical installer
