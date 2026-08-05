@@ -26,7 +26,7 @@ The source version is **0.2.0**. This release does not claim physical-hardware q
 - Online installation from signed official Arch repositories is the normal mode.
 - Offline mode is shown only when the medium contains a complete signed schema-v2 local source manifest, trusted keyring/repository, and all required package archives, and that source passes pre-wipe validation. A bootable ISO alone is not an offline-completeness claim.
 - A checksum authenticates the publisher only when its detached signature verifies against a release-key fingerprint obtained through an independent trusted channel. Unsigned artifacts are labeled `.unsigned`.
-- Physical support is limited to explicit Pass entries in the release's [hardware qualification record](docs/hardware-qualification.md). The current template contains no physical-hardware Pass.
+- Physical support is limited to explicit Pass entries in the release's [hardware qualification record](docs/hardware-qualification.md). One user-reported `0.2.0` physical run is recorded as Partial; no full physical-hardware Pass is claimed without the tested ISO digest and completed checklist.
 
 ## Whole-disk safety
 

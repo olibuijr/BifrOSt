@@ -2,7 +2,7 @@
 
 This document is the qualification record and per-release template for BifrOSt 0.2. A row is a support claim only when it names a release artifact, exact hardware/firmware, a completed result, and retained evidence. QEMU results do not qualify physical hardware.
 
-**Current source status (`0.2.0`): no physical-hardware rows have been verified in this repository. All rows below remain Not tested until evidence is recorded for a released ISO.**
+**Current source status (`0.2.0`): one user-reported physical run is recorded as Partial below. The tested installation and USB still carried the `0.2.0-rc1` label before being designated `0.2.0`; no full physical-hardware Pass is claimed without the tested ISO digest and completed checklist.**
 
 Secure Boot is outside the 0.2 qualification boundary and must remain disabled. Proprietary NVIDIA, hybrid-graphics switching, and NVIDIA external-display paths are also outside the default qualification boundary unless an explicitly named configuration is added and tested.
 
@@ -17,7 +17,15 @@ Secure Boot is outside the 0.2 qualification boundary and must remain disabled. 
 
 | Release | ISO SHA-256 | Firmware mode | Standard install | LUKS2 install | USB-written boot | Evidence | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.2.0 | Not recorded | UEFI, Secure Boot off | Not tested | Not tested | Not tested | None | Not tested |
+| 0.2.0 | Not retained for tested media | UEFI, Secure Boot off | Partial | Not tested | Partial | User report and locally inspected system identity | Partial |
+
+## Reported 0.2.0 physical run
+
+On 2026-08-05, the user reported that BifrOSt worked on the current PC and USB key and designated that tested build as `0.2.0` for release. Direct inspection found the earlier `0.2.0-rc1` label in the running installation (`/etc/os-release`) and USB volume (`BIFROST_020RC1_20260805`). Because the tested ISO SHA-256 and detailed checklist were not retained, this is a Partial `0.2.0` observation rather than a full qualification Pass.
+
+| Artifact | System/vendor model | BIOS/UEFI | CPU | GPU + driver | Network device + driver | Installed target | Install mode | Observation | Qualification |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `0.2.0` designation; tested media carried the earlier `0.2.0-rc1` label; ISO SHA-256 not retained | Lenovo ThinkPad T14 Gen 4 (`21HES0BG00`) | `N3QET48W` 1.48; UEFI; Secure Boot disabled | 13th Gen Intel Core i5-1345U | Intel Iris Xe (`8086:a7a1`), `i915` | Intel CNVi Wi-Fi (`8086:51f1`), `iwlwifi`; Intel I219-LM Ethernet (`8086:0dc5`), `e1000e` | WD PC SN740 512 GB NVMe; standard Btrfs installation | Standard | User reports the PC installation and USB key work; local hardware and release identity inspected 2026-08-05; detailed checklist and immutable logs not retained | Partial |
 
 ## Required physical matrix
 
@@ -25,7 +33,7 @@ Duplicate rows as needed. Record exact identifiers rather than only “Intel lap
 
 | Release | System/vendor model | BIOS/UEFI version | CPU | GPU + driver | Network device + driver | Target bus/model/firmware | Install mode | Result | Evidence/issue |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.2.0 | Not recorded | Not recorded | Intel class | Intel graphics class | Intel Wi-Fi class | NVMe class | Standard | Not tested | None |
+| 0.2.0 | Lenovo ThinkPad T14 Gen 4 (`21HES0BG00`) | `N3QET48W` 1.48; UEFI, Secure Boot disabled | Intel Core i5-1345U | Intel Iris Xe (`8086:a7a1`), `i915` | Intel CNVi Wi-Fi (`8086:51f1`), `iwlwifi`; Intel I219-LM Ethernet (`8086:0dc5`), `e1000e` | NVMe, WD PC SN740 512 GB | Standard | Partial | User-reported working PC installation and USB; tested-media SHA-256 and detailed checklist not retained |
 | 0.2.0 | Not recorded | Not recorded | AMD class | AMD graphics class | AMD/MediaTek Wi-Fi class | NVMe class | LUKS2 | Not tested | None |
 | 0.2.0 | Not recorded | Not recorded | Any | Any | Ethernet class | SATA SSD class | Standard | Not tested | None |
 | 0.2.0 | Not recorded | Not recorded | Any | Any | Broadcom Wi-Fi class | Internal disk | Standard | Not tested | None |
