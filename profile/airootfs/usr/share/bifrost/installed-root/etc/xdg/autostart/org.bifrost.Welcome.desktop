@@ -6,6 +6,6 @@ Comment=Show first-boot information once
 Comment[is]=Sýna mikilvægar upplýsingar einu sinni við fyrstu ræsingu
 Exec=bifrost-welcome
 TryExec=bifrost-welcome
-OnlyShowIn=COSMIC;
+OnlyShowIn=X-COSMIC;
 X-GNOME-Autostart-Delay=4
 NoDisplay=true
