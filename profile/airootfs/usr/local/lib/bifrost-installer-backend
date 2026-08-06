@@ -871,13 +871,52 @@ with open(sys.argv[3], "a") as output:
 
 archinstall_command() {
     local mode=$1 wrapper_dir="$RUNTIME_DIR/archinstall-path"
+    local seed_cache=/usr/share/bifrost/installer-cache
+    local seeded_config="$RUNTIME_DIR/pacman-seeded.conf"
     install -d -m 0700 "$wrapper_dir"
+    if [[ -f $seed_cache/manifest.json ]]; then
+        python3 - /etc/pacman.conf "$seeded_config" "$seed_cache" <<'PY'
+import sys
+from pathlib import Path
+
+source, destination, seed_cache = map(Path, sys.argv[1:])
+lines = source.read_text(encoding="utf-8").splitlines()
+result = []
+in_options = False
+inserted = False
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        in_options = stripped == "[options]"
+        result.append(line)
+        if in_options:
+            result.extend((f"CacheDir = {seed_cache}", "CacheDir = /var/cache/pacman/pkg"))
+            inserted = True
+        continue
+    if in_options and stripped.startswith("CacheDir"):
+        continue
+    result.append(line)
+if not inserted:
+    raise SystemExit("[options] is missing from the live pacman configuration")
+destination.write_text("\n".join(result) + "\n", encoding="utf-8")
+PY
+        export BIFROST_PACMAN_CONF=$seeded_config
+    else
+        unset BIFROST_PACMAN_CONF
+    fi
     cat >"$wrapper_dir/pacstrap" <<'SH'
 #!/usr/bin/bash
 set -Eeuo pipefail
 declare -a forwarded=()
+[[ -z ${BIFROST_PACMAN_CONF:-} ]] || forwarded+=(-c)
 for argument in "$@"; do
-    [[ $argument == -K ]] || forwarded+=("$argument")
+    if [[ $argument == -K ]]; then
+        continue
+    fi
+    if [[ -n ${BIFROST_PACMAN_CONF:-} && $argument == /etc/pacman.conf ]]; then
+        argument=$BIFROST_PACMAN_CONF
+    fi
+    forwarded+=("$argument")
 done
 # Archinstall creates this directory before pacstrap. Remove it only if it is
 # still empty so pacstrap's default host-keyring copy path can run.
@@ -887,11 +926,10 @@ SH
     chmod 0700 "$wrapper_dir/pacstrap"
     local -a command=(archinstall --config "$GENERATED_CONFIG" --creds "$GENERATED_CREDS" --silent)
     [[ $mode == offline ]] && command+=(--offline)
-    # Archinstall 3.0 always asks pacstrap for an empty target keyring. With
-    # pacman 7 this cannot authenticate the initial package set. The constrained
-    # wrapper removes only -K so pacstrap copies the already-populated, signed
-    # live Arch keyring into the target; repository/package signatures remain
-    # mandatory and are rechecked by pacman.
+    # Archinstall initializes an empty target keyring. The constrained wrapper
+    # removes only -K so pacstrap copies the populated live keyring. When the
+    # signed package seed is present, -c lets every pacstrap transaction reuse
+    # it and fall back to the live writable cache for packages not on the ISO.
     PATH="$wrapper_dir:$PATH" "${command[@]}" "${@:2}" 2>&1 | sanitize_archinstall_stream
 }
 
