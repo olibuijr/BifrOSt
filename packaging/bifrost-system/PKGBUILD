@@ -1,7 +1,7 @@
 # Maintainer: BifrOSt release engineering
 pkgname=bifrost-system
 pkgver="$(<../../VERSION)"
-pkgrel=3
+pkgrel=4
 pkgdesc="BifrOSt system integration and first-party maintenance payload"
 arch=('any')
 url='https://github.com/olibuijr/BifrOSt'
@@ -31,6 +31,9 @@ package() {
     install -Dm644 \
         "$source_root/profile/airootfs/usr/share/bifrost/branding/bifrost-mark.svg" \
         "$pkgdir/usr/share/bifrost/branding/bifrost-mark.svg"
+    install -Dm644 \
+        "$source_root/profile/airootfs/usr/share/icons/hicolor/scalable/apps/bifrost.svg" \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/bifrost.svg"
     install -Dm644 \
         "$source_root/profile/airootfs/usr/share/bifrost/cosmic-background.ron" \
         "$pkgdir/usr/share/bifrost/branding/cosmic-background.ron"
