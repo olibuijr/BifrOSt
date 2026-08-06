@@ -1074,7 +1074,8 @@ PY
 bootstrap_bifrost_system() {
     [[ -n $BIFROST_PACKAGE && -f $BIFROST_PACKAGE ]] \
         || fail installed_assets_missing "The verified bifrost-system bootstrap package is unavailable."
-    local bootstrap_dir="$TARGET_MOUNT/run/bifrost-bootstrap"
+    local bootstrap_inside=/var/tmp/bifrost-bootstrap
+    local bootstrap_dir="$TARGET_MOUNT$bootstrap_inside"
     local package_name fingerprint
     package_name=${BIFROST_PACKAGE##*/}
     fingerprint=$(<"$BIFROST_ALPM_DIR/alpm-repository-key.fingerprint")
@@ -1083,7 +1084,7 @@ bootstrap_bifrost_system() {
     install -m 0644 "$BIFROST_PACKAGE.sig" "$bootstrap_dir/$package_name.sig"
     install -m 0644 "$BIFROST_ALPM_DIR/alpm-repository-key.asc" "$bootstrap_dir/repository-key.asc"
 
-    arch-chroot "$TARGET_MOUNT" pacman-key --add /run/bifrost-bootstrap/repository-key.asc \
+    arch-chroot "$TARGET_MOUNT" pacman-key --add "$bootstrap_inside/repository-key.asc" \
         || fail package_trust_failed "The pinned BifrOSt repository key could not be imported."
     arch-chroot "$TARGET_MOUNT" pacman-key --lsign-key "$fingerprint" \
         || fail package_trust_failed "The pinned BifrOSt repository key could not be locally trusted."
@@ -1094,7 +1095,7 @@ from pathlib import Path
 
 root = Path(os.environ["TARGET_ROOT"])
 source = root / "etc/pacman.conf"
-destination = root / "run/bifrost-bootstrap/pacman.conf"
+destination = root / "var/tmp/bifrost-bootstrap/pacman.conf"
 lines = source.read_text(encoding="utf-8").splitlines()
 result = []
 in_options = False
@@ -1118,8 +1119,8 @@ if not set_local_level:
     raise SystemExit("[options] is missing from the installed pacman configuration")
 destination.write_text("\n".join(result) + "\n", encoding="utf-8")
 PY
-    arch-chroot "$TARGET_MOUNT" pacman --config /run/bifrost-bootstrap/pacman.conf \
-        -U --noconfirm "/run/bifrost-bootstrap/$package_name" \
+    arch-chroot "$TARGET_MOUNT" pacman --config "$bootstrap_inside/pacman.conf" \
+        -U --noconfirm "$bootstrap_inside/$package_name" \
         || fail package_install_failed "The signed bifrost-system bootstrap package could not be registered."
 
     [[ -f $TARGET_MOUNT$BIFROST_REPOSITORY_INCLUDE ]] \
