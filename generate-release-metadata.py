@@ -152,9 +152,12 @@ def optional_integer(fields: dict[str, list[str]], key: str, path: Path) -> int 
 
 
 def find_package_archive(cache_files: list[Path], name: str, version: str, architecture: str) -> Path:
-    filename_version = version.split(":", 1)[-1]
-    prefix = f"{name}-{filename_version}-{architecture}.pkg.tar."
-    expected = {f"{prefix}{suffix}" for suffix in PACKAGE_ARCHIVE_SUFFIXES}
+    filename_versions = {version, version.split(":", 1)[-1]}
+    expected = {
+        f"{name}-{filename_version}-{architecture}.pkg.tar.{suffix}"
+        for filename_version in filename_versions
+        for suffix in PACKAGE_ARCHIVE_SUFFIXES
+    }
     matches = [path for path in cache_files if path.name in expected]
     if len(matches) != 1:
         names = ", ".join(path.name for path in matches) or "none"
