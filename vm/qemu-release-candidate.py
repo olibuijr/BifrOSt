@@ -178,7 +178,7 @@ locale = Path('/etc/locale.conf').read_text().splitlines()
 assert 'LANG={config['locale']}' in locale
 vconsole = Path('/etc/vconsole.conf').read_text().splitlines()
 assert 'KEYMAP={config['keymap']}' in vconsole
-assert 'ID=bifrost' in Path('/usr/lib/os-release').read_text().splitlines()
+assert 'ID=bifrost' in Path('/etc/os-release').read_text().splitlines()
 run_dirs = [p for p in Path('/var/log/bifrost-installer').iterdir() if p.is_dir()]
 assert len(run_dirs) == 1
 run_dir = run_dirs[0]
