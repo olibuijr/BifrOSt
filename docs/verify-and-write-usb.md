@@ -4,7 +4,9 @@
 
 ## Release artifact status
 
-BifrOSt 0.2.1 release metadata uses these exact names for the standard ISO `bifrost-0.2.1-x86_64.iso`:
+The `main` branch targets unreleased BifrOSt 0.2.1; the latest published GitHub release at this revision is `v0.2.0`. Always use the guide from the exact release tag whose artifact you are verifying. The following filenames describe locally generated 0.2.1 candidates and any future 0.2.1 release; their presence does not mean `v0.2.1` has been published.
+
+BifrOSt 0.2.1 tooling uses these exact names for the standard ISO `bifrost-0.2.1-x86_64.iso`:
 
 - Unsigned build: `bifrost-0.2.1-x86_64.iso.sha256.unsigned`. This can detect an accidental download error, but it does **not** authenticate the publisher.
 - Signed build: `bifrost-0.2.1-x86_64.iso.sha256` plus detached armored signature `bifrost-0.2.1-x86_64.iso.sha256.asc`.

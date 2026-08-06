@@ -694,13 +694,10 @@ try:
         modifications = config.get("disk_config", {}).get("device_modifications", [])
         if len(modifications) != 1 or modifications[0].get("device") != expected["path"]:
             raise RuntimeError("generated disk configuration target is invalid")
-        modifications[0]["device"] = stable_path
-        config_text = json.dumps(config, indent=2, ensure_ascii=False) + "\n"
-        temporary = config_path.with_suffix(config_path.suffix + ".tmp")
-        temporary.write_text(config_text)
-        os.chmod(temporary, 0o600)
-        temporary.replace(config_path)
-        plan["config_sha256"] = hashlib.sha256(config_text.encode()).hexdigest()
+        # Archinstall discovers block devices by their canonical kernel paths and
+        # silently ignores a /dev/disk/by-id symlink here. Keep the canonical
+        # path in its schema; the frozen stable ID, device number, topology, and
+        # geometry are revalidated immediately before this configuration runs.
         atomic_json(plan_path, plan)
 except (OSError, ValueError, KeyError, subprocess.CalledProcessError, RuntimeError) as error:
     print(str(error), file=sys.stderr)

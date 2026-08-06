@@ -41,7 +41,7 @@ The final in-app confirmation repeats the selected disk identity and requires th
 
 | ID | Purpose | 0.2 manifest packages |
 | --- | --- | --- |
-| `base` | Mandatory installed-system base | `btrfs-progs`, `cryptsetup`, `firefox`, `firefox-i18n-is`, `fwupd`, `gtk4`, `libadwaita`, `linux-firmware`, `networkmanager`, `noto-fonts`, `noto-fonts-emoji`, `plymouth`, `python-gobject` |
+| `base` | Mandatory installed-system base | `btrfs-progs`, `cryptsetup`, `firefox`, `firefox-i18n-is`, `flatpak`, `fwupd`, `gtk4`, `libadwaita`, `linux-firmware`, `networkmanager`, `noto-fonts`, `noto-fonts-emoji`, `pacman-contrib`, `polkit`, `plymouth`, `python-gobject` |
 | `dev-rust` | Rust development | `base-devel`, `clang`, `cmake`, `git`, `just`, `lld`, `ninja`, `rust-analyzer`, `rustup` |
 | `dev-containers` | Container development | `distrobox`, `podman` |
 | `dev-web` | Web development | `base-devel`, `git`, `nodejs`, `npm` |
@@ -57,7 +57,7 @@ The installer offers Icelandic and English for critical installation messages. T
 
 **Online is the normal 0.2 mode.** Before the wipe, the backend refreshes signed official Arch package databases, resolves every selected and implicit package, and probes the actual source URL. It repeats source and target readiness immediately before handing the plan to archinstall. Because BifrOSt keeps Arch's rolling repositories, package versions can differ between installations and a source checkout is not a bit-for-bit reproducible package set.
 
-**Offline is offered only when the medium contains the signed schema-v2 manifest, trusted keyring, local repository, and every package required by the selected and implicit profiles below `/usr/share/bifrost/offline/`.** The backend verifies the manifest signature, completeness, and each package SHA-256 before the wipe. The mere presence of cached packages, a bootable ISO, or an “offline” label is not proof of completeness. If the installer does not explicitly report a validated offline source, assume the installation requires network access. The 0.2.0 source tree does not itself make an offline-completeness claim.
+**Offline is offered only when the medium contains the signed schema-v2 manifest, trusted keyring, local repository, and every package required by the selected and implicit profiles below `/usr/share/bifrost/offline/`.** The backend verifies the manifest signature, completeness, and each package SHA-256 before the wipe. The mere presence of cached packages, a bootable ISO, or an “offline” label is not proof of completeness. If the installer does not explicitly report a validated offline source, assume the installation requires network access. The current source tree does not itself make an offline-completeness claim.
 
 ## Install and first boot
 
