@@ -1,0 +1,13 @@
+[core]
+repo_version=1
+mode=archive-z2
+collection-id=org.bifrost.Apps
+indexed-deltas=true
+
+[flatpak]
+title=BifrOSt Applications
+comment=Signed first-party applications for BifrOSt
+description=Official application repository for BifrOSt
+homepage=https://github.com/olibuijr/BifrOSt
+default-branch=stable
+gpg-keys=mDMEanPyNBYJKwYBBAHaRw8BAQdADymOgk8hAeLJohl6n017M7CjnTf0npY2SrIMwzFlReu0QEJpZnJPU3QgQXBwbGljYXRpb24gUmVsZWFzZXMgPG9saWJ1aWpyQHVzZXJzLm5vcmVwbHkuZ2l0aHViLmNvbT6IlgQTFgoAPhYhBNyR9SXdacRnHj03EiCeFCwlib0WBQJqc/I0AhsDBQkDwmcABQsJCAcCBhUKCQgLAgQWAgMBAh4BAheAAAoJECCeFCwlib0W800A+wWP7SHRblY6JxEuXB37imK+S+LKqQIqHSGAipecxujlAP43PgBjM0IMakHc4UaH2xVs6KKirLI251I+FIqXzfbNDg==
