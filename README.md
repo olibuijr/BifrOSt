@@ -48,8 +48,27 @@ Read [Installation and safety](docs/install-and-safety.md) before using the inst
 - Icelandic locale (`is_IS.UTF-8`), Icelandic keyboard defaults, and `Atlantic/Reykjavik` timezone
 - COSMIC with original BifrOSt aurora, glacier, basalt, and longship artwork
 - Linux and Linux LTS kernels, NetworkManager, and PipeWire from official Arch repositories
+- A signed, per-user Flatpak catalog and **BifrOSt Update Assistant** for first-party BifrOSt applications
 
 BifrOSt does not replace `pacman`, ship a custom kernel, enable the AUR automatically, or freeze Arch's rolling package versions.
+
+## BifrOSt application updates
+
+Open **BifrOSt Update Assistant** from the application menu to install, update, or roll back first-party BifrOSt applications. The assistant trusts only the embedded release key and the pinned repository at `https://olibuijr.github.io/BifrOSt/flatpak/repo/`, accepts only `org.bifrost.*` application IDs, and installs applications per user through Flatpak. It does not update Arch Linux; continue to use a complete `sudo pacman -Syu` transaction for the operating system.
+
+Rollback returns an application to the most recent different commit recorded before an assistant-managed update. It does not roll back application data, the operating system, or applications installed from other Flatpak remotes. The command-line interface is `bifrost-app-manager`; run it without arguments for the exact `list`, `install`, `update`, `update-all`, and `rollback` syntax.
+
+Release operators dispatch one or more reviewed `.flatpak` bundles with the protected application-release key:
+
+```bash
+python3 dispatch-app-release.py \
+  --bundle /absolute/path/to/org.bifrost.Example.flatpak \
+  --gpg-key DC91F525DD69C4671E3D3712209E142C2589BD16 \
+  --gpg-homedir ~/.local/share/bifrost-release-gnupg \
+  --publish
+```
+
+The dispatcher hashes each input, rejects refs outside the `org.bifrost` namespace, stages rather than mutates the live repository, signs imported commits and repository metadata, then publishes `release/flatpak-repo/` plus `release/bifrost.flatpakrepo` to GitHub Pages. Run without `--publish` to validate and sign locally first. Protect the signing key and obtain the passphrase through the local pinentry prompt; never pass it on the command line.
 
 ## Documentation
 

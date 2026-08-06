@@ -43,4 +43,7 @@ file_permissions=(
   ["/usr/local/bin/bifrost-installer"]="0:0:755"
   ["/usr/local/lib/bifrost-installer-backend"]="0:0:755"
   ["/usr/local/bin/apply-bifrost-live-branding"]="0:0:755"
+  ["/usr/share/bifrost/installed-root/usr/bin/bifrost-app-manager"]="0:0:755"
+  ["/usr/share/bifrost/installed-root/usr/bin/bifrost-update-assistant"]="0:0:755"
+  ["/usr/share/bifrost/installed-root/usr/lib/bifrost-apps/manager.py"]="0:0:644"
 )

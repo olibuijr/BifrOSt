@@ -6,6 +6,7 @@
     "cryptsetup",
     "firefox",
     "firefox-i18n-is",
+    "flatpak",
     "fwupd",
     "gtk4",
     "libadwaita",
