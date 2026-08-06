@@ -18,9 +18,9 @@ BifrOSt is an independent, Icelandic-first developer workstation and live/instal
 
 ![BifrOSt aurora wallpaper](profile/airootfs/usr/share/backgrounds/bifrost/bifrost-aurora.png)
 
-## 0.2.1 release status
+## 0.2.1 development status
 
-The source version is **0.2.1**. This release does not claim physical-hardware qualification, offline completeness, bit-for-bit reproducibility, operating-system rollback, or Secure Boot support. Artifact signing and installed provenance are claimed only where the release record and independently verified signatures document them.
+The source version on `main` is **0.2.1**, but no `v0.2.1` GitHub release has been published at this revision. The latest published release is [`v0.2.0`](https://github.com/olibuijr/BifrOSt/releases/tag/v0.2.0). The 0.2.1 development line does not claim physical-hardware qualification, offline completeness, bit-for-bit reproducibility, operating-system rollback, or Secure Boot support. Artifact signing and installed provenance are claimed only where a published release record and independently verified signatures document them; a local candidate or generated checksum is not a published release.
 
 - Installation requires x86_64 UEFI with Secure Boot disabled.
 - Online installation from signed official Arch repositories is the normal mode.
@@ -36,7 +36,7 @@ Device paths can change. Never identify a disk by `/dev/sd…` or capacity alone
 
 Read [Installation and safety](docs/install-and-safety.md) before using the installer.
 
-## What 0.2.1 provides
+## What the 0.2.1 development source provides
 
 - Icelandic-first installer and desktop, with English available for critical installation, failure, and recovery messages
 - Whole-disk GPT/Btrfs installation with UEFI systemd-boot
@@ -56,6 +56,8 @@ BifrOSt does not replace `pacman`, ship a custom kernel, enable the AUR automati
 ## BifrOSt application updates
 
 Open **BifrOSt Update Assistant** from the application menu to install, update, or roll back first-party BifrOSt applications. The assistant trusts only the embedded release key and the pinned repository at `https://olibuijr.github.io/BifrOSt/flatpak/repo/`, accepts only `org.bifrost.*` application IDs, and installs applications per user through Flatpak. It does not update Arch Linux; continue to use a complete `sudo pacman -Syu` transaction for the operating system.
+
+At this source revision, the production catalog contains no application refs, so the assistant's empty state is expected. [`BifrOSt-Apps`](https://github.com/olibuijr/BifrOSt-Apps) currently provides the generator and validated template, not a published end-user application. The CI-only `org.bifrost.TemplateCheck` identity is never submitted to the trusted catalog.
 
 Rollback returns an application to the most recent different commit recorded before an assistant-managed update. It does not roll back application data, the operating system, or applications installed from other Flatpak remotes. The command-line interface is `bifrost-app-manager`; run it without arguments for the exact `list`, `install`, `update`, `update-all`, and `rollback` syntax.
 
@@ -123,7 +125,7 @@ This publishes only `alpm/x86_64` at `https://olibuijr.github.io/BifrOSt/alpm/$a
 
 ## Download, verify, and write the USB
 
-Download the exact x86_64 ISO and every accompanying verification artifact from the [GitHub releases page](https://github.com/olibuijr/BifrOSt/releases/latest). Follow [Verify a release and write USB media](docs/verify-and-write-usb.md) before booting.
+At this revision, the [latest published release](https://github.com/olibuijr/BifrOSt/releases/latest) is `v0.2.0`, while `main` targets unreleased `0.2.1`. Select a release explicitly, download its exact x86_64 ISO and every accompanying verification artifact, and use documentation from the matching source tag. For `v0.2.0`, follow its [version-matched verification guide](https://github.com/olibuijr/BifrOSt/blob/v0.2.0/docs/verify-and-write-usb.md). The [verification guide on `main`](docs/verify-and-write-usb.md) documents 0.2.1 candidate names and must not be used to infer filenames or signing status for `v0.2.0`.
 
 Prefer an image writer that shows the destination model and capacity, such as KDE ISO Image Writer, GNOME Disks, or Rufus. Imaging erases the entire destination. The command-line guide requires a verified `/dev/disk/by-id/` identity and deliberately does not suggest copying a generic `/dev/sdX`.
 

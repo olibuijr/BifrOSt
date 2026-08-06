@@ -21,6 +21,8 @@ Keep the installer, Update Assistant, maintenance utility, welcome utility, priv
 
 The Update Assistant discovers signed applications dynamically. It accepts only `org.bifrost.*` applications from the pinned HTTPS repository and embedded application-release key. Do not add a hard-coded application registry.
 
+At the current `main` revision, the production catalog contains no application refs. An empty Update Assistant is therefore correct until a real candidate from BifrOSt-Apps is reviewed, signed, and published. `org.bifrost.TemplateCheck` is an ephemeral CI identity, not a product or catalog candidate. Update this status text when the first real application is published; do not encode the temporary empty state in updater logic.
+
 Application development and CI produce unsigned reviewed `.flatpak` candidates in BifrOSt-Apps. Final release operators use `dispatch-app-release.py` here to:
 
 1. stage immutable copies and report SHA-256 digests;
