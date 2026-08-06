@@ -879,6 +879,9 @@ declare -a forwarded=()
 for argument in "$@"; do
     [[ $argument == -K ]] || forwarded+=("$argument")
 done
+# Archinstall creates this directory before pacstrap. Remove it only if it is
+# still empty so pacstrap's default host-keyring copy path can run.
+rmdir -- /mnt/etc/pacman.d/gnupg 2>/dev/null || true
 exec /usr/bin/pacstrap "${forwarded[@]}"
 SH
     chmod 0700 "$wrapper_dir/pacstrap"
