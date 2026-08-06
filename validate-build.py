@@ -263,6 +263,12 @@ def validate_profile(root: Path) -> None:
     bootstrap = read_package_names(root / "profile/bootstrap_packages")
     if not {"arch-install-scripts", "base"}.issubset(bootstrap):
         raise ValidationError("bootstrap package list must include arch-install-scripts and base")
+    pacman_init_link = (
+        root
+        / "profile/airootfs/etc/systemd/system/multi-user.target.wants/pacman-init.service"
+    )
+    if not pacman_init_link.is_symlink() or pacman_init_link.readlink() != Path("../pacman-init.service"):
+        raise ValidationError("live pacman keyring initialization service must be enabled")
 
 
 def validate_release_contract(root: Path) -> None:
