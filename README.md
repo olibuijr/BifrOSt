@@ -71,6 +71,10 @@ python3 dispatch-app-release.py \
 
 The dispatcher hashes each input, rejects refs outside the `org.bifrost` namespace, stages rather than mutates the live repository, signs imported commits and repository metadata, then publishes `release/flatpak-repo/` plus `release/bifrost.flatpakrepo` to GitHub Pages. Run without `--publish` to validate and sign locally first. Protect the signing key and obtain the passphrase through the local pinentry prompt; never pass it on the command line.
 
+Application source and Flatpak manifests live in the separate [`olibuijr/BifrOSt-Apps`](https://github.com/olibuijr/BifrOSt-Apps) repository. Its generator creates a functional Python, GTK 4, and Libadwaita application with consistent `org.bifrost.*` identity, bilingual metadata, conservative sandbox permissions, tests, and a Flatpak manifest. Application CI produces unsigned review candidates only; it never receives the protected catalog-signing key or publishes directly to the trusted remote.
+
+This operating-system repository remains the owner of the Update Assistant, embedded application-release public key, namespace admission policy, signed OSTree catalog, and GitHub Pages publication. After reviewing an app candidate from BifrOSt-Apps, release operators use the dispatcher above to sign and publish it. The updater discovers published applications dynamically, so adding an app does not require a hard-coded registry or an OS source change.
+
 ## Signed BifrOSt system package
 
 Fresh installations register the first-party installed-system payload as the `bifrost-system` Arch package. Its narrowly scoped `[bifrost]` repository is configured after the official Arch repositories, requires signed packages and repository databases, and is used only to upgrade the already-installed BifrOSt payload. Kernels, the base system, and other distribution packages remain owned and updated by the official Arch repositories. Apply system maintenance only as a complete `sudo pacman -Syu` transaction; BifrOSt does not support partial upgrades, automatic application, operating-system rollback, or Secure Boot.
