@@ -1,0 +1,67 @@
+name: QEMU release-candidate qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      iso_path:
+        description: Absolute path to the exact, already-built ISO on the self-hosted runner
+        required: true
+        type: string
+      case:
+        description: Installation case
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - standard
+          - luks2
+      work_dir:
+        description: Optional new evidence directory (must not already exist)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qemu-release-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    # These labels deliberately exclude GitHub-hosted runners. The runner must be
+    # Arch Linux with KVM access and qemu-desktop/edk2-ovmf already installed.
+    runs-on: [self-hosted, Linux, X64, arch, kvm]
+    timeout-minutes: 400
+    env:
+      INPUT_ISO: ${{ inputs.iso_path }}
+      INPUT_CASE: ${{ inputs.case }}
+      INPUT_WORK_DIR: ${{ inputs.work_dir }}
+      DEFAULT_WORK_DIR: ${{ runner.temp }}/bifrost-qemu-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Qualify exact ISO in standard and LUKS2 virtual machines
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          work_dir=${INPUT_WORK_DIR:-$DEFAULT_WORK_DIR}
+          printf 'Evidence directory: `%s`\n' "$work_dir" >> "$GITHUB_STEP_SUMMARY"
+          python3 vm/qemu-release-candidate.py \
+            --iso "$INPUT_ISO" \
+            --case "$INPUT_CASE" \
+            --work-dir "$work_dir"
+      - name: Upload compact QEMU evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qemu-release-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ inputs.work_dir || env.DEFAULT_WORK_DIR }}/manifest.json
+            ${{ inputs.work_dir || env.DEFAULT_WORK_DIR }}/result.json
+            ${{ inputs.work_dir || env.DEFAULT_WORK_DIR }}/iso.sha256
+            ${{ inputs.work_dir || env.DEFAULT_WORK_DIR }}/*/*.json
+            ${{ inputs.work_dir || env.DEFAULT_WORK_DIR }}/*/*.log
+          if-no-files-found: error
+          retention-days: 30

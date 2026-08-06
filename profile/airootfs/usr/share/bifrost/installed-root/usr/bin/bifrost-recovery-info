@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Print read-only BifrOSt recovery facts; never changes disks or configuration."""
 import argparse
+import hashlib
 import json
 import locale
 import subprocess
@@ -8,6 +9,7 @@ from pathlib import Path
 
 STATE = Path("/etc/bifrost/install-state.json")
 LOG_DIR = Path("/var/log/bifrost-installer")
+RELEASE = Path("/usr/share/bifrost/release.json")
 TEXT = {
     "is": {
         "title": "BifrOSt — örugg greining fyrir endurheimt",
@@ -16,6 +18,11 @@ TEXT = {
         "root": "Rótardiskur",
         "encryption": "Dulkóðun",
         "profiles": "Valin snið",
+        "run_id": "Uppsetningarkeyrsla",
+        "source_mode": "Pakkagjafi uppsetningar",
+        "installed_defaults": "Staðfærslustilling",
+        "provenance": "Útgáfuuppruni",
+        "evidence": "Varanleg uppsetningarskrá",
         "logs": "Atvikaskrár",
         "record_on": "virk samkvæmt uppsetningarskrá",
         "record_off": "ekki virk samkvæmt uppsetningarskrá",
@@ -23,6 +30,7 @@ TEXT = {
         "not_detected": "ekkert dulkóðað lag fannst í tækjakeðju rótar",
         "unknown": "óþekkt / ekki skráð",
         "no_logs": "engar uppsetningarskrár fundust",
+        "logs_denied": "skráin er til en aðeins rótarnotandi má lesa hana",
         "journal": "Fyrir núverandi ræsingu: journalctl -b",
         "guide": "Leiðbeiningar",
     },
@@ -33,6 +41,11 @@ TEXT = {
         "root": "Root device",
         "encryption": "Encryption",
         "profiles": "Selected profiles",
+        "run_id": "Installer run",
+        "source_mode": "Installation source",
+        "installed_defaults": "Locale defaults",
+        "provenance": "Release provenance",
+        "evidence": "Persistent installer evidence",
         "logs": "Logs",
         "record_on": "enabled according to the installation record",
         "record_off": "not enabled according to the installation record",
@@ -40,6 +53,7 @@ TEXT = {
         "not_detected": "no encrypted layer detected in the root device chain",
         "unknown": "unknown / not recorded",
         "no_logs": "no installer logs found",
+        "logs_denied": "the record exists but only root can read it",
         "journal": "For the current boot: journalctl -b",
         "guide": "Guide",
     },
@@ -60,6 +74,44 @@ def install_state():
     except (OSError, ValueError):
         return None
     return value if isinstance(value, dict) and value.get("schema_version") == 2 else None
+
+def installer_evidence(state):
+    if not state:
+        return None
+    run_id = state.get("run_id")
+    recorded = state.get("installer_evidence")
+    if not isinstance(run_id, str) or not run_id or "/" in run_id:
+        return None
+    expected = LOG_DIR / run_id
+    return expected if recorded == str(expected) else None
+
+
+def release_provenance(state):
+    if not state or not isinstance(state.get("release"), dict):
+        return None
+    recorded = state["release"]
+    if recorded.get("path") != str(RELEASE):
+        return None
+    try:
+        release_bytes = RELEASE.read_bytes()
+        installed = json.loads(release_bytes)
+    except (OSError, ValueError):
+        return None
+    fields = ("version", "source_revision", "source_date_epoch", "build_id")
+    if (installed.get("schema_version") != 1
+            or installed.get("provenance_status") != "build-input"
+            or recorded.get("provenance_status") != installed.get("provenance_status")
+            or recorded.get("sha256") != hashlib.sha256(release_bytes).hexdigest()
+            or any(recorded.get(field) != installed.get(field) for field in fields)):
+        return None
+    return f'{installed["version"]} / {installed["source_revision"]} / {installed["build_id"]} / {installed["provenance_status"]} ({RELEASE})'
+def evidence_files(path):
+    try:
+        return sorted(item for item in path.iterdir() if item.is_file())
+    except PermissionError:
+        return None
+    except OSError:
+        return []
 
 
 def system_name():
@@ -89,7 +141,20 @@ def main():
     default_language = "is" if (locale.getlocale()[0] or "").lower().startswith("is") else "en"
     parser = argparse.ArgumentParser(description="Read-only BifrOSt recovery discovery")
     parser.add_argument("--language", choices=("is", "en"), default=default_language)
+    parser.add_argument("--self-check", action="store_true")
     args = parser.parse_args()
+    if args.self_check:
+        sample_run = "20260806T120000Z-00000000-0000-0000-0000-000000000000"
+        assert installer_evidence({
+            "run_id": sample_run,
+            "installer_evidence": f"/var/log/bifrost-installer/{sample_run}",
+        }) == LOG_DIR / sample_run
+        assert installer_evidence({
+            "run_id": sample_run,
+            "installer_evidence": "/tmp/not-installer-evidence",
+        }) is None
+        print("recovery self-check passed")
+        return
     text = TEXT[args.language]
     state = install_state()
     root_source = (command("findmnt", "-n", "-o", "SOURCE", "/") or "").partition("[")[0] or None
@@ -105,13 +170,31 @@ def main():
     if not isinstance(profiles, list) or not all(isinstance(item, str) for item in profiles):
         profiles = None
     print(f'{text["profiles"]}: {", ".join(profiles) if profiles else text["unknown"]}')
+    run_id = state.get("run_id") if state else None
+    source_mode = state.get("source_mode") if state else None
+    defaults = state.get("system") if state else None
+    if not isinstance(defaults, dict):
+        defaults = None
+    defaults_text = None
+    if defaults:
+        values = (defaults.get("locale"), defaults.get("keyboard_layout"), defaults.get("timezone"))
+        if all(isinstance(value, str) and value for value in values):
+            defaults_text = " / ".join(values)
+    evidence = installer_evidence(state)
+    print(f'{text["run_id"]}: {run_id if isinstance(run_id, str) else text["unknown"]}')
+    print(f'{text["source_mode"]}: {source_mode if source_mode in ("online", "offline") else text["unknown"]}')
+    print(f'{text["installed_defaults"]}: {defaults_text or text["unknown"]}')
+    print(f'{text["provenance"]}: {release_provenance(state) or text["unknown"]}')
+    print(f'{text["evidence"]}: {evidence or text["unknown"]}')
     print()
     print(f'{text["logs"]}:')
-    try:
-        logs = sorted(path for path in LOG_DIR.iterdir() if path.is_file())
-    except OSError:
+    if evidence:
+        logs = evidence_files(evidence)
+    else:
         logs = []
-    if logs:
+    if logs is None:
+        print(f'  {evidence}: {text["logs_denied"]}')
+    elif logs:
         for path in logs:
             try:
                 size = path.stat().st_size

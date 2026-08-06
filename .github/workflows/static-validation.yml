@@ -25,3 +25,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes desktop-file-utils shellcheck
       - name: Validate source and ArchISO profile
         run: python3 ./validate-build.py .
+      - name: Run installer self-check
+        run: python3 profile/airootfs/usr/local/bin/bifrost-installer --self-check
+      - name: Run unit test discovery
+        run: python3 -m unittest discover --start-directory tests --pattern 'test_*.py' --verbose

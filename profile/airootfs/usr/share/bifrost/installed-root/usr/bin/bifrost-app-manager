@@ -28,11 +28,13 @@ def parse_args() -> argparse.Namespace:
         ("install", "install a published BifrOSt application"),
         ("update", "update one installed BifrOSt application"),
         ("rollback", "roll back to the last version recorded before an update"),
+        ("remove", "remove an installed BifrOSt application"),
     ):
         command_parser = subparsers.add_parser(command, help=help_text)
         command_parser.add_argument("app_id", help="application ID in the org.bifrost namespace")
 
-    subparsers.add_parser("update-all", help="update every installed BifrOSt application")
+    update_all_parser = subparsers.add_parser("update-all", help="update every installed BifrOSt application")
+    update_all_parser.add_argument("--json", action="store_true", help="emit per-application results as JSON")
     return parser.parse_args()
 
 
@@ -45,7 +47,8 @@ def print_records(records, *, as_json: bool) -> None:
         return
     for record in records:
         current = record.installed_version or "not installed"
-        print(f"{record.app_id}\t{record.status}\t{current}\t{record.available_version}\t{record.name}")
+        available = record.available_version or "unpublished"
+        print(f"{record.app_id}\t{record.status}\t{current}\t{available}\t{record.name}")
 
 
 def main() -> int:
@@ -70,11 +73,24 @@ def main() -> int:
             manager.update(args.app_id)
             print(f"Updated {args.app_id}.")
         elif args.command == "update-all":
-            updated = manager.update_all()
-            print(f"Updated {len(updated)} BifrOSt application(s).")
+            results = manager.update_all()
+            if args.json:
+                print(json.dumps([asdict(result) for result in results], indent=2, sort_keys=True))
+            else:
+                for result in results:
+                    detail = f": {result.error}" if result.error else ""
+                    print(f"{result.app_id}\t{result.status}{detail}")
+                completed = sum(result.status == "completed" for result in results)
+                failed = sum(result.status == "failed" for result in results)
+                print(f"Completed {completed} BifrOSt application update(s); {failed} failed.")
+            if any(result.status == "failed" for result in results):
+                return 1
         elif args.command == "rollback":
             commit = manager.rollback(args.app_id)
             print(f"Rolled back {args.app_id} to {commit}.")
+        elif args.command == "remove":
+            manager.remove(args.app_id)
+            print(f"Removed {args.app_id}.")
         else:
             raise AssertionError(args.command)
     except UpdateError as error:

@@ -1,202 +1,114 @@
-# Exact QEMU installation test plan
+# Automated QEMU release-candidate qualification
 
-This is a manual release-candidate plan, not a claim that a given artifact passed. Record the ISO SHA-256, QEMU version, OVMF package version, installer run ID, logs, and every deviation. Both cases use UEFI with Secure Boot disabled because that is the supported 0.2 boundary.
+This is a release-candidate test procedure, not a claim that an ISO passed. It exercises the exact ISO named on the command line in two independent UEFI/KVM virtual machines. Secure Boot remains disabled: BifrOSt does not support Secure Boot in the 0.2 series. This procedure also makes no system or Btrfs rollback claim.
 
-## Host preparation
+## Host requirements
 
-On Arch Linux, install official packages:
-
-```bash
-sudo pacman -S --needed qemu-desktop edk2-ovmf
-```
-
-Set the ISO to one exact, already verified artifact. Do not use a wildcard that could select a different build:
+Use an Arch Linux x86-64 host with `/dev/kvm` available to the invoking user and these official packages installed:
 
 ```bash
-ISO='/absolute/path/to/bifrost-0.2.0-x86_64.iso'
-WORKDIR="$HOME/.local/state/bifrost-qemu-0.2.0"
-test -f "$ISO"
-install -d -m 700 -- "$WORKDIR"
-sha256sum -- "$ISO" | tee "$WORKDIR/iso.sha256"
-qemu-system-x86_64 --version | tee "$WORKDIR/qemu.version"
-pacman -Q edk2-ovmf | tee "$WORKDIR/ovmf.version"
+sudo pacman -Syu --needed qemu-desktop edk2-ovmf
 ```
 
-If the release uses a different exact ISO basename, change only `ISO`. Compare `iso.sha256` with the previously authenticated checksum before continuing.
+The harness uses the 4 MiB firmware images at:
 
-The commands below use Arch's 4 MiB OVMF images at `/usr/share/edk2/x64/OVMF_CODE.4m.fd` and `/usr/share/edk2/x64/OVMF_VARS.4m.fd`, KVM, 8 GiB RAM, four vCPUs, a 64 GiB blank VirtIO disk, user-mode networking, and a GTK display. If KVM is unavailable, record the substitution rather than silently changing the test environment.
+- `/usr/share/edk2/x64/OVMF_CODE.4m.fd`
+- `/usr/share/edk2/x64/OVMF_VARS.4m.fd`
 
-## Case A: standard unencrypted installation
+It refuses to fall back silently when KVM, QEMU, or those images are unavailable.
 
-Create a fresh disk and independent writable firmware state:
+## Run both cases
+
+Name one exact, already-built release-candidate ISO. Do not use a wildcard or a moving symlink:
 
 ```bash
-cp -- /usr/share/edk2/x64/OVMF_VARS.4m.fd "$WORKDIR/standard_VARS.fd"
-qemu-img create -f qcow2 "$WORKDIR/standard.qcow2" 64G
+ISO=/absolute/path/to/bifrost-0.2.1-x86_64.iso
+python3 vm/qemu-release-candidate.py --iso "$ISO" --case all
 ```
 
-Boot the ISO:
+The default evidence root is a newly created mode-`0700` directory below `~/.local/state/bifrost/qemu-rc/`. The command prints its exact path only after both cases pass. For a deterministic CI location, provide a path that does not exist yet:
 
 ```bash
-qemu-system-x86_64 \
-  -name bifrost-0.2-standard \
-  -enable-kvm -machine q35,accel=kvm -cpu host \
-  -smp 4 -m 8192 \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
-  -drive if=pflash,format=raw,file="$WORKDIR/standard_VARS.fd" \
-  -drive id=system,if=none,format=qcow2,file="$WORKDIR/standard.qcow2" \
-  -device virtio-blk-pci,drive=system,serial=BIFROSTSTD001 \
-  -cdrom "$ISO" \
-  -device virtio-vga \
-  -display gtk \
-  -nic user,model=virtio-net-pci \
-  -serial file:"$WORKDIR/standard-install.serial.log" \
-  -boot menu=on
+python3 vm/qemu-release-candidate.py \
+  --iso /srv/bifrost-candidates/bifrost-0.2.1-x86_64.iso \
+  --case all \
+  --work-dir /srv/bifrost-qemu-evidence/0.2.1-rc1
 ```
 
-Perform these exact UI actions:
+`--case standard` and `--case luks2` are useful for diagnosis, but a release candidate is not qualified unless `--case all` passes in one recorded run.
 
-1. Boot **BifrOSt live/install medium** and open **Setja upp BifrOSt / Install BifrOSt**.
-2. Select English for this case. Confirm the source readiness page identifies **online** mode and becomes ready before any destructive confirmation is available. Do not accept an offline claim.
-3. Rescan. Select only the 64 GiB VirtIO disk with serial `BIFROSTSTD001`. Record its displayed path, model, serial, WWN state, byte size, and logical-sector size.
-4. Leave **Encrypt disk (LUKS2)** off. Keep only mandatory `base`; leave every optional development profile unselected.
-5. Enter a disposable VM-only user and hostname. Never reuse a real password.
-6. On review, confirm mode is whole disk, encryption is off, `base` is selected, and the source/language/defaults match the earlier pages.
-7. Open the final styled confirmation. Verify model, 64 GiB size, serial `BIFROSTSTD001`, and current path. Type the exact path displayed by the dialog. Confirm the wipe.
-8. Wait for a terminal success event. Record the run ID and live/target log paths. Shut down from the live environment; do not merely reset the VM.
+> **Credential warning:** The harness credentials are fixed, public, disposable test values. Never reuse them, replace them with real credentials, or enter any real secret into these VMs. A retained QCOW2 must contain test data only; successful log-redaction checks are not proof that a disk is safe to handle as non-confidential evidence.
 
-Cold-boot the installed disk with the ISO detached:
+### Disk safety
+
+The command accepts no disk-device argument. It creates a new 64 GiB sparse `disk.qcow2` inside each new case directory and refuses an existing work directory, a symlink ISO, or a missing ISO. The guest payload independently requires exactly one virtual disk at `/dev/vda`, checks the case-specific `BIFROST-RC-*` VirtIO serial, and refuses installation if any of those facts differ. Never modify the harness to pass through a host block device for release qualification.
+
+Each case receives its own writable copy of `OVMF_VARS.4m.fd`; firmware state and disks are never shared between cases.
+
+## What is exercised
+
+For each case, the harness:
+
+1. records the exact ISO path, byte size, SHA-256, QEMU version, OVMF package version, and firmware-image hashes;
+2. creates an isolated disk and OVMF variable store;
+3. attaches the exact ISO and cold-boots it with UEFI/KVM;
+4. waits for the live image's serial root console and transfers mode-`0600` schema-v2 intent and secrets;
+5. invokes `/usr/local/lib/bifrost-installer-backend` noninteractively and requires its terminal success event;
+6. powers off the live environment completely;
+7. starts a new QEMU process with no CD-ROM or ISO argument; and
+8. runs read-only installed-system assertions before powering off again.
+
+The standard case selects only `base`, disables encryption, and requests `en_US.UTF-8` with the `us` keymap. The LUKS2 case selects exactly `base` and `dev-rust`, requests `is_IS.UTF-8` with `is-latin1`, and requires a LUKS2 root.
+
+Before the encrypted disk is unlocked successfully, the harness submits an intentionally wrong disposable passphrase. It must observe rejection or a repeated unlock prompt before it sends the correct disposable passphrase. Failure to observe that rejection fails the case.
+
+The installed-system probe requires:
+
+- `/usr/share/bifrost/release.json` to have `build-input` provenance and identify the root `VERSION`, source revision, build ID, and profile digest;
+- `/etc/bifrost/install-state.json` to reference that file's exact hash and the same version, revision, build ID, and provenance status;
+- both `linux` and `linux-lts` packages, kernels, and initramfs images;
+- exactly the selected profile IDs, every package in their installed manifests, and no unselected profile ID in recorded state;
+- the requested deterministic locale and console keymap;
+- BifrOSt OS identity;
+- exactly one retained installer run whose recorded run ID/path agree with install state and whose status, backend, archinstall, plan, and generated-config evidence files are present; and
+- absence of the disposable login and encryption passwords from retained installer logs.
+
+A serial-only one-shot assertion service is added to the isolated test image after the production backend succeeds. It makes cold-boot results observable and powers off; it is test instrumentation, not installed BifrOSt payload.
+
+## Evidence layout
+
+The top-level evidence directory contains:
+
+- `manifest.json` — ISO identity plus host QEMU/OVMF versions and hashes;
+- `iso.sha256` — the exact ISO digest;
+- `result.json` — terminal result and paths for every selected case.
+
+Each `standard/` or `luks2/` directory contains:
+
+- `disk.qcow2` — retained installed system and `/var/log/bifrost-installer/<run-id>` evidence;
+- `OVMF_VARS.fd` — the case's retained firmware state;
+- `install.command.json` and `boot.command.json` — exact QEMU argument vectors;
+- `install.serial.log` and `boot.serial.log` — complete serial transcripts;
+- `install.qemu.log` and `boot.qemu.log` — QEMU diagnostics; and
+- `result.json` — the case result, wrong-passphrase result, and evidence paths.
+
+The boot serial log includes normalized release/install-state JSON, package versions, retained evidence paths and permissions, and boot-file hashes. Preserve the entire evidence directory on the controlled runner. The GitHub workflow uploads only compact JSON and log evidence; it deliberately does **not** upload the potentially large QCOW2 disks, which remain at the self-hosted runner path printed in the job summary.
+
+## Manual GitHub execution
+
+The **QEMU release-candidate qualification** workflow is manual-only and targets labels:
+
+```text
+self-hosted, Linux, X64, arch, kvm
+```
+
+GitHub-hosted runners are intentionally excluded because nested virtualization and safe KVM access are not assumed. Place the exact ISO on the runner, then dispatch:
 
 ```bash
-qemu-system-x86_64 \
-  -name bifrost-0.2-standard-installed \
-  -enable-kvm -machine q35,accel=kvm -cpu host \
-  -smp 4 -m 8192 \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
-  -drive if=pflash,format=raw,file="$WORKDIR/standard_VARS.fd" \
-  -drive id=system,if=none,format=qcow2,file="$WORKDIR/standard.qcow2" \
-  -device virtio-blk-pci,drive=system,serial=BIFROSTSTD001 \
-  -device virtio-vga \
-  -display gtk \
-  -nic user,model=virtio-net-pci \
-  -serial file:"$WORKDIR/standard-boot.serial.log"
+gh workflow run qemu-release-candidate.yml \
+  -f iso_path=/srv/bifrost-candidates/bifrost-0.2.1-x86_64.iso \
+  -f case=all \
+  -f work_dir=/srv/bifrost-qemu-evidence/0.2.1-rc1
 ```
 
-Pass criteria:
-
-- systemd-boot starts from the virtual disk without the ISO;
-- no LUKS unlock prompt appears;
-- login reaches a usable COSMIC session;
-- Icelandic defaults are present and English critical installer text was usable;
-- the welcome appears once, reports `base` and unencrypted storage from recorded state, and does not reappear after explicit dismissal plus logout/login;
-- networking works and a repository refresh can be attempted without changing the test result into an update qualification claim;
-- the following read-only checks show a FAT EFI System Partition, Btrfs root/subvolumes, persistent installer logs, and no selected optional-profile record:
-
-```bash
-findmnt /
-findmnt /boot
-lsblk -o NAME,PATH,TYPE,FSTYPE,SIZE,MODEL,SERIAL,WWN,MOUNTPOINTS
-sudo btrfs subvolume list /
-sudo bootctl status
-cat /etc/bifrost/install-state.json
-sudo bifrost-recovery-info
-sudo find /var/log/bifrost-installer -maxdepth 2 -type f -printf '%m %u:%g %p\n'
-```
-
-Review retained intent/config/output manually and fail the case if a plaintext login password is present.
-
-## Case B: encrypted LUKS2 installation
-
-Create a separate blank disk and firmware state; never reuse Case A:
-
-```bash
-cp -- /usr/share/edk2/x64/OVMF_VARS.4m.fd "$WORKDIR/encrypted_VARS.fd"
-qemu-img create -f qcow2 "$WORKDIR/encrypted.qcow2" 64G
-```
-
-Boot the ISO:
-
-```bash
-qemu-system-x86_64 \
-  -name bifrost-0.2-encrypted \
-  -enable-kvm -machine q35,accel=kvm -cpu host \
-  -smp 4 -m 8192 \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
-  -drive if=pflash,format=raw,file="$WORKDIR/encrypted_VARS.fd" \
-  -drive id=system,if=none,format=qcow2,file="$WORKDIR/encrypted.qcow2" \
-  -device virtio-blk-pci,drive=system,serial=BIFROSTLUKS001 \
-  -cdrom "$ISO" \
-  -device virtio-vga \
-  -display gtk \
-  -nic user,model=virtio-net-pci \
-  -serial file:"$WORKDIR/encrypted-install.serial.log" \
-  -boot menu=on
-```
-
-Perform these exact UI actions:
-
-1. Boot the live medium, open the installer, and select Icelandic for this case.
-2. Confirm online source readiness completes before destructive confirmation.
-3. Rescan and select only the 64 GiB VirtIO disk with serial `BIFROSTLUKS001`; record all displayed identity and geometry facts.
-4. Enable **Encrypt disk (LUKS2)**. Enter and confirm a unique disposable VM-only passphrase that differs from the disposable login password. Do not put either secret in notes or shell history.
-5. Select `base` plus `dev-rust`; leave `dev-containers`, `dev-web`, and `dev-python` off.
-6. Verify the review identifies LUKS2 and exactly those profiles. In the final dialog, recheck serial `BIFROSTLUKS001`, model, 64 GiB size, and path; type the exact displayed path and confirm.
-7. Wait for success, record run/log paths, and shut down cleanly.
-
-Cold-boot with the ISO detached:
-
-```bash
-qemu-system-x86_64 \
-  -name bifrost-0.2-encrypted-installed \
-  -enable-kvm -machine q35,accel=kvm -cpu host \
-  -smp 4 -m 8192 \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
-  -drive if=pflash,format=raw,file="$WORKDIR/encrypted_VARS.fd" \
-  -drive id=system,if=none,format=qcow2,file="$WORKDIR/encrypted.qcow2" \
-  -device virtio-blk-pci,drive=system,serial=BIFROSTLUKS001 \
-  -device virtio-vga \
-  -display gtk \
-  -nic user,model=virtio-net-pci \
-  -serial file:"$WORKDIR/encrypted-boot.serial.log"
-```
-
-At the LUKS prompt, enter one intentionally wrong value and confirm it is rejected; then enter the correct disposable passphrase. Pass criteria:
-
-- unlock is required on every cold boot and a wrong passphrase never bypasses it;
-- correct unlock reaches systemd-boot/system startup and a usable COSMIC login;
-- first-boot welcome reports encrypted storage and exactly `base` plus `dev-rust`, then remains dismissed after logout/login;
-- every `dev-rust` manifest package is installed and the three unselected profile IDs are absent from recorded state; installing a Rust toolchain through `rustup` is a separate post-install action;
-- the EFI System Partition is FAT and unencrypted, while the root partition reports `crypto_LUKS` with Btrfs inside the active mapping;
-- retained logs contain no plaintext login password or LUKS passphrase.
-
-Run the read-only checks:
-
-```bash
-findmnt /
-findmnt /boot
-lsblk -o NAME,PATH,TYPE,FSTYPE,SIZE,MODEL,SERIAL,WWN,MOUNTPOINTS
-CRYPT_PART="$(lsblk -rpo PATH,FSTYPE | awk '$2 == "crypto_LUKS" { print $1; exit }')"
-test -n "$CRYPT_PART"
-sudo cryptsetup luksDump "$CRYPT_PART"
-sudo btrfs subvolume list /
-sudo bootctl status
-cat /etc/bifrost/install-state.json
-pacman -Q base-devel clang cmake git just lld ninja rust-analyzer rustup
-sudo bifrost-recovery-info
-sudo find /var/log/bifrost-installer -maxdepth 2 -type f -printf '%m %u:%g %p\n'
-```
-
-`cryptsetup luksDump` must report LUKS2. Review retained files manually for secret leakage without copying the secret into a search command.
-
-## Required result record
-
-For each case retain:
-
-- exact ISO basename and SHA-256;
-- host QEMU/OVMF versions and launch command;
-- disk serial, source mode/identity, chosen language, profiles, and encryption mode;
-- installer run ID, event/output log, and reported live/target log paths;
-- screenshots of final review, success, first boot, and relevant storage checks;
-- Pass/Fail for every criterion above and links to any failure issue.
-
-Do not call 0.2 qualified from only one mode, a boot-only check, an install that still has the ISO attached, or a run whose evidence was not retained.
+The runner account must already have read/write access to `/dev/kvm` and write access to the new work-directory parent. Do not run the workflow with `sudo`, do not expose host disks to QEMU, and do not treat a single-case or boot-only result as release qualification.

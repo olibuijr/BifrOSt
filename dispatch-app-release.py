@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import argparse
 import base64
 import hashlib
@@ -11,6 +12,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import stat
 import sys
 import tempfile
 from typing import Iterable
@@ -25,6 +27,52 @@ PUBLIC_KEY = Path("profile/airootfs/usr/share/bifrost/installed-root/usr/share/b
 
 class DispatchError(RuntimeError):
     pass
+
+@dataclass(frozen=True)
+class StagedBundle:
+    source_name: str
+    path: Path
+    size: int
+    sha256: str
+
+
+def stage_bundle_files(bundles: list[Path], directory: Path) -> list[StagedBundle]:
+    """Copy each caller-controlled bundle once into a private, read-only staging area."""
+    os.chmod(directory, 0o700)
+    staged: list[StagedBundle] = []
+    open_flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+    for index, bundle in enumerate(bundles):
+        if bundle.suffix != ".flatpak":
+            raise DispatchError("bundle path must have a .flatpak suffix")
+        try:
+            source_descriptor = os.open(bundle, open_flags)
+        except OSError as error:
+            raise DispatchError("bundle must be an accessible regular, non-symlink file") from error
+        destination = directory / f"bundle-{index:04d}.flatpak"
+        try:
+            source_stat = os.fstat(source_descriptor)
+            if not stat.S_ISREG(source_stat.st_mode):
+                raise DispatchError("bundle must be a regular, non-symlink file")
+            destination_descriptor = os.open(
+                destination,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+                0o600,
+            )
+            try:
+                with os.fdopen(source_descriptor, "rb", closefd=False) as source, os.fdopen(
+                    destination_descriptor, "wb", closefd=False
+                ) as output:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
+                    output.flush()
+                    os.fsync(output.fileno())
+            finally:
+                os.close(destination_descriptor)
+        finally:
+            os.close(source_descriptor)
+        os.chmod(destination, 0o400)
+        size, digest = stable_sha256(destination)
+        staged.append(StagedBundle(bundle.name, destination, size, digest))
+    return staged
 
 
 def parse_args() -> argparse.Namespace:
@@ -269,14 +317,22 @@ def main() -> int:
         public_key_path = args.public_key.resolve()
         url = validate_url(args.repository_url, allow_local=args.allow_local_url)
         fingerprint, public_key = validate_key(args.gpg_key, homedir, public_key_path)
-        bundles = [bundle.resolve() for bundle in args.bundle]
-        for bundle in bundles:
-            if not bundle.is_file() or bundle.suffix != ".flatpak":
-                raise DispatchError(f"bundle does not exist or lacks .flatpak suffix: {bundle}")
-            size, digest = stable_sha256(bundle)
-            print(f"Importing {bundle.name}: {size} bytes, sha256 {digest}")
-        staging = stage_repository(repository, bundles, fingerprint, homedir, public_key)
-        replace_repository(repository, staging)
+        bundles = list(args.bundle)
+        with tempfile.TemporaryDirectory(prefix="bifrost-app-bundles-") as bundle_directory_name:
+            artifacts = stage_bundle_files(bundles, Path(bundle_directory_name))
+            for artifact in artifacts:
+                print(
+                    f"Importing {artifact.source_name!r}: "
+                    f"{artifact.size} bytes, sha256 {artifact.sha256}"
+                )
+            staging = stage_repository(
+                repository,
+                [artifact.path for artifact in artifacts],
+                fingerprint,
+                homedir,
+                public_key,
+            )
+            replace_repository(repository, staging)
         write_definition(definition, url, public_key)
         print(f"Signed repository: {repository}")
         print(f"Repository definition: {definition}")

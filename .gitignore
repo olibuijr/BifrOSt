@@ -10,6 +10,7 @@ __pycache__/
 *.py[cod]
 
 release/
+profile/airootfs/usr/share/bifrost/alpm/
 *.iso.*
 *.img
 *.raw
@@ -24,6 +25,8 @@ release/
 *.key
 *.sig
 *.asc
+!keys/
+!keys/*.asc
 .env
 .env.*
 secrets.json

@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034
 
-bifrost_version="0.2.0"
+version_file="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/VERSION"
+if [[ ! -r "${version_file}" ]]; then
+    printf 'profiledef.sh: canonical VERSION file is not readable: %s\n' "${version_file}" >&2
+    return 1
+fi
+IFS= read -r bifrost_version < "${version_file}"
+if [[ ! "${bifrost_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+    printf 'profiledef.sh: VERSION must contain one semantic release version\n' >&2
+    return 1
+fi
 source_date_epoch="${SOURCE_DATE_EPOCH:-0}"
 if [[ ! "${source_date_epoch}" =~ ^[0-9]+$ ]]; then
     printf 'profiledef.sh: SOURCE_DATE_EPOCH must be a non-negative integer\n' >&2
@@ -25,8 +34,7 @@ iso_application="BifrOSt Icelandic developer live/install ISO"
 iso_version="${bifrost_version}"
 install_dir="bifrost"
 buildmodes=('iso')
-bootmodes=('bios.syslinux'
-           'uefi.systemd-boot')
+bootmodes=('uefi.systemd-boot')
 pacman_conf="pacman.conf"
 airootfs_image_type="squashfs"
 airootfs_image_tool_options=('-comp' 'xz' '-Xbcj' 'x86' '-b' '1M' '-Xdict-size' '1M' '-processors' '4')
@@ -46,4 +54,5 @@ file_permissions=(
   ["/usr/share/bifrost/installed-root/usr/bin/bifrost-app-manager"]="0:0:755"
   ["/usr/share/bifrost/installed-root/usr/bin/bifrost-update-assistant"]="0:0:755"
   ["/usr/share/bifrost/installed-root/usr/lib/bifrost-apps/manager.py"]="0:0:644"
+  ["/usr/share/bifrost/installed-root/usr/share/bifrost/release.json"]="0:0:644"
 )

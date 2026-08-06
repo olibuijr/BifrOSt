@@ -14,7 +14,16 @@ readonly MINIMUM_BYTES=$((16 * 1024 * 1024 * 1024))
 emit_early_error() {
     EVENT_MESSAGE=$1 python3 - <<'PY'
 import json, os
-print(json.dumps({"schema_version": 2, "event": "error", "code": "invalid_invocation", "message": os.environ["EVENT_MESSAGE"], "wiped": False}, ensure_ascii=False), flush=True)
+print(json.dumps({
+    "schema_version": 2,
+    "event": "error",
+    "code": "invalid_invocation",
+    "message": os.environ["EVENT_MESSAGE"],
+    "wiped": False,
+    "log_dir": "/var/log/bifrost-installer",
+    "live_log_dir": "/var/log/bifrost-installer",
+    "target_log_dir": None,
+}, ensure_ascii=False), flush=True)
 PY
 }
 
@@ -40,6 +49,11 @@ readonly GENERATED_CREDS="$RUNTIME_DIR/credentials.json"
 readonly STATUS="$RUN_DIR/status.json"
 readonly MIRRORLIST=/etc/pacman.d/mirrorlist
 readonly MIRRORLIST_BACKUP="$RUNTIME_DIR/mirrorlist.original"
+readonly TARGET_LOG_DIR="$LOG_ROOT/$RUN_ID"
+readonly RELEASE_PATH=/usr/share/bifrost/release.json
+readonly BIFROST_ALPM_DIR=/usr/share/bifrost/alpm
+readonly BIFROST_REPOSITORY_INCLUDE=/etc/pacman.conf.d/bifrost.conf
+BIFROST_PACKAGE=
 
 install -d -m 0700 "$RUN_DIR" "$RUNTIME_DIR"
 exec 3>&1
@@ -50,6 +64,7 @@ ERROR_MESSAGE="The installer stopped unexpectedly."
 WIPE_STARTED=0
 MIRRORLIST_CHANGED=0
 FINAL_SUCCESS=0
+TARGET_EVIDENCE_PERSISTED=0
 CURRENT_PHASE=initializing
 
 write_status() {
@@ -102,15 +117,17 @@ fail() {
 redact_file() {
     local source=$1 destination=$2
     [[ -f $source ]] || return 0
-    python3 - "$SECRETS_INPUT" "$source" "$destination" <<'PY'
+    python3 - "$SECRETS_INPUT" "$GENERATED_CREDS" "$source" "$destination" <<'PY'
 import json, re, sys
 from pathlib import Path
-secrets_path, source_path, destination_path = map(Path, sys.argv[1:])
+secrets_path, credentials_path, source_path, destination_path = map(Path, sys.argv[1:])
 text = source_path.read_text(errors="replace")
-try:
-    secrets = json.loads(secrets_path.read_text())
-except Exception:
-    secrets = {}
+
+def load(path):
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {}
 
 def values(value, key=""):
     if isinstance(value, dict):
@@ -122,9 +139,10 @@ def values(value, key=""):
     elif isinstance(value, str) and "password" in key.lower() and value:
         yield value
 
-for secret in sorted(set(values(secrets)), key=len, reverse=True):
+sensitive = set(values(load(secrets_path))) | set(values(load(credentials_path)))
+for secret in sorted(sensitive, key=len, reverse=True):
     text = text.replace(secret, "[REDACTED]")
-text = re.sub(r'(?i)(password[^:=\n]{0,24}[:=]\s*)\S+', r'\1[REDACTED]', text)
+text = re.sub(r'(?i)((?:enc_)?password[^:=\n]{0,24}[:=]\s*)\S+', r'\1[REDACTED]', text)
 destination_path.write_text(text)
 PY
     chmod 0600 "$destination"
@@ -145,33 +163,74 @@ cleanup_target() {
     fi
 }
 
+rollback_target_evidence() {
+    mountpoint -q "$TARGET_MOUNT" || return 0
+    TARGET_ROOT=$TARGET_MOUNT TARGET_RECORD=$TARGET_LOG_DIR RUN_ID_VALUE=$RUN_ID python3 - <<'PY'
+import json
+import os
+import shutil
+from pathlib import Path
+
+root = Path(os.environ["TARGET_ROOT"])
+evidence = root / Path(os.environ["TARGET_RECORD"]).relative_to("/")
+state = root / "etc/bifrost/install-state.json"
+try:
+    recorded = json.loads(state.read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    recorded = None
+if isinstance(recorded, dict) and recorded.get("run_id") == os.environ["RUN_ID_VALUE"]:
+    state.unlink(missing_ok=True)
+shutil.rmtree(evidence, ignore_errors=True)
+PY
+}
+
 on_exit() {
     local rc=$?
     trap - EXIT INT TERM
     set +e
-    if (( WIPE_STARTED == 1 )) && [[ -f /var/log/archinstall/install.log ]]; then
-        redact_file /var/log/archinstall/install.log "$RUN_DIR/archinstall.log"
+    if (( rc != 0 || FINAL_SUCCESS != 1 )); then
+        if (( WIPE_STARTED == 1 )) && [[ -f /var/log/archinstall/install.log ]]; then
+            redact_file /var/log/archinstall/install.log "$RUN_DIR/archinstall.log"
+        fi
+        CURRENT_PHASE=${CURRENT_PHASE:-failed}
+        write_status failed "$ERROR_CODE" "$ERROR_MESSAGE"
+        redact_file "$RAW_LOG" "$RUN_DIR/backend.log"
+        rollback_target_evidence
     fi
     cleanup_target
     if (( MIRRORLIST_CHANGED == 1 )) && [[ -f $MIRRORLIST_BACKUP ]]; then
         install -m 0644 "$MIRRORLIST_BACKUP" "$MIRRORLIST"
     fi
-    redact_file "$RAW_LOG" "$RUN_DIR/backend.log"
     rm -rf "$RUNTIME_DIR"
 
-    if (( rc == 0 && FINAL_SUCCESS == 1 )); then
-        CURRENT_PHASE=complete
-        write_status success "" "Installation completed and boot artifacts were verified."
-        EVENT_LOG=$RUN_DIR RUN_ID_VALUE=$RUN_ID python3 - >&3 <<'PY'
+    if (( rc == 0 && FINAL_SUCCESS == 1 && TARGET_EVIDENCE_PERSISTED == 1 )); then
+        EVENT_LIVE_LOG=$RUN_DIR EVENT_TARGET_LOG=$TARGET_LOG_DIR RUN_ID_VALUE=$RUN_ID python3 - >&3 <<'PY'
 import json, os
-print(json.dumps({"schema_version": 2, "run_id": os.environ["RUN_ID_VALUE"], "event": "success", "message": "Installation completed and boot artifacts were verified.", "log_dir": os.environ["EVENT_LOG"], "wiped": True}, ensure_ascii=False), flush=True)
+print(json.dumps({
+    "schema_version": 2,
+    "run_id": os.environ["RUN_ID_VALUE"],
+    "event": "success",
+    "message": "Installation completed and boot artifacts, locale state, and persistent evidence were verified.",
+    "log_dir": os.environ["EVENT_TARGET_LOG"],
+    "live_log_dir": os.environ["EVENT_LIVE_LOG"],
+    "target_log_dir": os.environ["EVENT_TARGET_LOG"],
+    "wiped": True,
+}, ensure_ascii=False), flush=True)
 PY
     else
-        CURRENT_PHASE=${CURRENT_PHASE:-failed}
-        write_status failed "$ERROR_CODE" "$ERROR_MESSAGE"
-        EVENT_CODE=$ERROR_CODE EVENT_MESSAGE=$ERROR_MESSAGE EVENT_LOG=$RUN_DIR EVENT_WIPED=$WIPE_STARTED RUN_ID_VALUE=$RUN_ID python3 - >&3 <<'PY'
+        EVENT_CODE=$ERROR_CODE EVENT_MESSAGE=$ERROR_MESSAGE EVENT_LIVE_LOG=$RUN_DIR EVENT_WIPED=$WIPE_STARTED RUN_ID_VALUE=$RUN_ID python3 - >&3 <<'PY'
 import json, os
-print(json.dumps({"schema_version": 2, "run_id": os.environ["RUN_ID_VALUE"], "event": "error", "code": os.environ["EVENT_CODE"], "message": os.environ["EVENT_MESSAGE"], "log_dir": os.environ["EVENT_LOG"], "wiped": os.environ["EVENT_WIPED"] == "1"}, ensure_ascii=False), flush=True)
+print(json.dumps({
+    "schema_version": 2,
+    "run_id": os.environ["RUN_ID_VALUE"],
+    "event": "error",
+    "code": os.environ["EVENT_CODE"],
+    "message": os.environ["EVENT_MESSAGE"],
+    "log_dir": os.environ["EVENT_LIVE_LOG"],
+    "live_log_dir": os.environ["EVENT_LIVE_LOG"],
+    "target_log_dir": None,
+    "wiped": os.environ["EVENT_WIPED"] == "1",
+}, ensure_ascii=False), flush=True)
 PY
     fi
     exec 3>&-
@@ -202,7 +261,7 @@ if matches:
         raise SystemExit(1)
 PY
     local command
-    for command in archinstall arch-chroot bootctl cryptsetup findmnt lsblk mountpoint openssl pacman python3 stat udevadm umount; do
+    for command in archinstall arch-chroot bootctl cryptsetup findmnt gpg gpgv lsblk mountpoint openssl pacman python3 stat udevadm umount; do
         command -v "$command" >/dev/null || fail missing_dependency "Required installer command is unavailable: $command"
     done
     if findmnt --mountpoint "$TARGET_MOUNT" >/dev/null 2>&1; then
@@ -477,6 +536,9 @@ try:
         target_key = canonical(stable)
         if target_key != expected.get("kernel_path"):
             raise RuntimeError("the selected stable hardware path was retargeted")
+        actual_number = os.stat(target_key).st_rdev
+        if [os.major(actual_number), os.minor(actual_number)] != expected.get("device_number"):
+            raise RuntimeError("the selected target device number changed")
     else:
         target_key = canonical(expected["path"])
 
@@ -625,12 +687,14 @@ try:
         stable_path = str(matches[0])
         expected["stable_path"] = stable_path
         expected["kernel_path"] = target_key
+        target_stat = os.stat(target_key)
+        expected["device_number"] = [os.major(target_stat.st_rdev), os.minor(target_stat.st_rdev)]
         expected["topology"] = topology
         config = json.loads(config_path.read_text())
         modifications = config.get("disk_config", {}).get("device_modifications", [])
         if len(modifications) != 1 or modifications[0].get("device") != expected["path"]:
             raise RuntimeError("generated disk configuration target is invalid")
-        modifications[0]["device"] = target_key
+        modifications[0]["device"] = stable_path
         config_text = json.dumps(config, indent=2, ensure_ascii=False) + "\n"
         temporary = config_path.with_suffix(config_path.suffix + ".tmp")
         temporary.write_text(config_text)
@@ -791,18 +855,21 @@ def secret_values(value, key=""):
     elif isinstance(value, str) and "password" in key.lower() and value:
         yield value
 
-try:
-    secrets = json.load(open(sys.argv[1]))
-except Exception:
-    secrets = {}
-values = sorted(set(secret_values(secrets)), key=len, reverse=True)
-with open(sys.argv[2], "a") as output:
+def load(path):
+    try:
+        return json.load(open(path))
+    except Exception:
+        return {}
+
+values = sorted(set(secret_values(load(sys.argv[1]))) | set(secret_values(load(sys.argv[2]))),
+                key=len, reverse=True)
+with open(sys.argv[3], "a") as output:
     for line in sys.stdin:
         for secret in values:
             line = line.replace(secret, "[REDACTED]")
         output.write(line)
         output.flush()
-' "$SECRETS_INPUT" "$RAW_LOG"
+' "$SECRETS_INPUT" "$GENERATED_CREDS" "$RAW_LOG"
 }
 
 archinstall_command() {
@@ -812,42 +879,302 @@ archinstall_command() {
     "${command[@]}" "${@:2}" 2>&1 | sanitize_archinstall_stream
 }
 
-apply_installed_experience() {
-    [[ -d $INSTALLED_ROOT && -d $INSTALLED_ROOT/usr ]] || fail installed_assets_missing "Installed-system assets are missing from the live image."
-    cp -a "$INSTALLED_ROOT/." "$TARGET_MOUNT/"
-    install -Dm644 /usr/share/bifrost/os-release "$TARGET_MOUNT/usr/lib/os-release"
-    ln -sfn ../usr/lib/os-release "$TARGET_MOUNT/etc/os-release"
-    install -Dm644 /usr/share/backgrounds/bifrost/bifrost-aurora.png \
-        "$TARGET_MOUNT/usr/share/backgrounds/bifrost/bifrost-aurora.png"
-    install -Dm644 /usr/share/bifrost/branding/bifrost-mark.svg \
-        "$TARGET_MOUNT/usr/share/bifrost/branding/bifrost-mark.svg"
-    install -Dm644 /usr/share/icons/hicolor/scalable/apps/bifrost.svg \
-        "$TARGET_MOUNT/usr/share/icons/hicolor/scalable/apps/bifrost.svg"
-    install -Dm644 /usr/share/bifrost/cosmic-background.ron \
-        "$TARGET_MOUNT/usr/share/cosmic/com.system76.CosmicBackground/v1/all"
-    install -d -m 0755 "$TARGET_MOUNT/usr/share/plymouth/themes"
-    cp -a /usr/share/plymouth/themes/bifrost "$TARGET_MOUNT/usr/share/plymouth/themes/"
-    install -Dm644 /etc/plymouth/plymouthd.conf "$TARGET_MOUNT/etc/plymouth/plymouthd.conf"
-    install -Dm644 /etc/systemd/system/plymouth-quit.service.d/bifrost.conf \
-        "$TARGET_MOUNT/etc/systemd/system/plymouth-quit.service.d/bifrost.conf"
-    install -d -m 0755 "$TARGET_MOUNT/etc/bifrost"
-    python3 - "$PLAN" "$TARGET_MOUNT/etc/bifrost/install-state.json" <<'PY'
-import json, sys
+validate_bifrost_package() {
+    python3 - "$BIFROST_ALPM_DIR" <<'PY'
+import hashlib
+import json
+import os
 from pathlib import Path
-plan = json.loads(Path(sys.argv[1]).read_text())
-state = {"schema_version": 2, "encryption": plan["options"]["encryption"], "profiles": plan["options"]["profiles"]}
-Path(sys.argv[2]).write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n")
+import re
+import subprocess
+import sys
+
+root = Path(sys.argv[1])
+manifest_path = root / "manifest.json"
+manifest_signature = root / "manifest.json.sig"
+keyring = root / "alpm-repository-key.gpg"
+public_key = root / "alpm-repository-key.asc"
+fingerprint_path = root / "alpm-repository-key.fingerprint"
+for required in (manifest_path, manifest_signature, keyring, public_key, fingerprint_path):
+    if not required.is_file():
+        raise SystemExit(f"signed bifrost-system bootstrap input is missing: {required.name}")
+
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+fingerprint = fingerprint_path.read_text(encoding="ascii").strip().upper()
+live_identity = {}
+for line in Path("/usr/share/bifrost/os-release").read_text(encoding="utf-8").splitlines():
+    if "=" in line:
+        key, value = line.split("=", 1)
+        live_identity[key] = value.strip().strip('"')
+if (
+    manifest.get("schema_version") != 1
+    or manifest.get("repository") != "bifrost-system"
+    or manifest.get("architecture") != "any"
+    or manifest.get("signing_fingerprint") != fingerprint
+    or not re.fullmatch(r"[0-9A-F]{40}", fingerprint)
+    or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", str(manifest.get("version", "")))
+    or manifest.get("version") != live_identity.get("VERSION_ID")
+    or not re.fullmatch(
+        rf"{re.escape(str(manifest.get('version', '')))}-[1-9][0-9]*",
+        str(manifest.get("package_version", "")),
+    )
+):
+    raise SystemExit("bifrost-system bootstrap manifest identity is invalid")
+
+def valid_signature(path, signature):
+    result = subprocess.run(
+        ["gpgv", "--keyring", str(keyring), "--status-fd", "1", str(signature), str(path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        text=True,
+    )
+    def signing_identity(line):
+        fields = line.split()
+        if not line.startswith("[GNUPG:] VALIDSIG ") or len(fields) <= 2:
+            return None
+        primary = fields[-1].upper()
+        if len(fields) > 11 and re.fullmatch(r"[0-9A-F]{40}", primary):
+            return primary
+        return fields[2].upper()
+
+    valid = {
+        identity
+        for line in result.stdout.splitlines()
+        if (identity := signing_identity(line)) is not None
+    }
+    if result.returncode or valid != {fingerprint}:
+        raise SystemExit(f"signature verification failed: {signature.name}")
+
+valid_signature(manifest_path, manifest_signature)
+shown = subprocess.run(
+    ["gpg", "--batch", "--with-colons", "--show-keys", str(public_key)],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    check=False,
+    text=True,
+)
+primary = []
+waiting = False
+for line in shown.stdout.splitlines():
+    fields = line.split(":")
+    kind = fields[0] if fields else ""
+    if kind == "pub":
+        waiting = True
+    elif waiting and kind == "fpr" and len(fields) > 9:
+        primary.append(fields[9].upper())
+        waiting = False
+    elif kind in {"pub", "sub"}:
+        waiting = False
+if shown.returncode or primary != [fingerprint]:
+    raise SystemExit("armored bootstrap key does not match the pinned signing fingerprint")
+
+packages = sorted(root.glob("bifrost-system-*.pkg.tar.zst"))
+if len(packages) != 1:
+    raise SystemExit("bootstrap must contain exactly one bifrost-system package")
+package = packages[0]
+package_signature = package.with_name(package.name + ".sig")
+files = manifest.get("files")
+if not isinstance(files, dict):
+    raise SystemExit("bootstrap manifest file inventory is invalid")
+for path in (package, package_signature):
+    record = files.get(path.name)
+    if (
+        not path.is_file()
+        or not isinstance(record, dict)
+        or set(record) != {"sha256", "size"}
+        or record["size"] != path.stat().st_size
+        or record["sha256"] != hashlib.file_digest(path.open("rb"), "sha256").hexdigest()
+    ):
+        raise SystemExit(f"bootstrap package inventory failed: {path.name}")
+valid_signature(package, package_signature)
+
+metadata = subprocess.run(
+    ["bsdtar", "-xOf", str(package), ".PKGINFO"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    check=False,
+    text=True,
+)
+values = {}
+for line in metadata.stdout.splitlines():
+    key, separator, value = line.partition(" = ")
+    if separator and key in {"pkgname", "pkgver"}:
+        if key in values:
+            raise SystemExit(f"bootstrap package metadata repeats {key}")
+        values[key] = value
+if (
+    metadata.returncode
+    or values.get("pkgname") != "bifrost-system"
+    or values.get("pkgver") != manifest["package_version"]
+):
+    raise SystemExit("bootstrap package identity does not match its signed manifest")
+
+release_result = subprocess.run(
+    ["bsdtar", "-xOf", str(package), "usr/share/bifrost/release.json"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    check=False,
+    text=True,
+)
+try:
+    release = json.loads(release_result.stdout)
+except json.JSONDecodeError as error:
+    raise SystemExit("bootstrap package has invalid installed release provenance") from error
+revision = release.get("source_revision")
+epoch = release.get("source_date_epoch")
+expected_build_id = (
+    f"bifrost-{manifest['version']}-{revision[:12]}-{epoch}"
+    if isinstance(revision, str) and isinstance(epoch, int) and not isinstance(epoch, bool)
+    else None
+)
+iso = release.get("iso")
+if (
+    release_result.returncode
+    or release.get("schema_version") != 1
+    or release.get("provenance_status") != "build-input"
+    or release.get("version") != manifest["version"]
+    or not isinstance(revision, str)
+    or not re.fullmatch(r"[0-9a-f]{40}", revision)
+    or not isinstance(epoch, int)
+    or isinstance(epoch, bool)
+    or epoch <= 0
+    or release.get("build_id") != expected_build_id
+    or not re.fullmatch(r"[0-9a-f]{64}", str(release.get("profile_sha256", "")))
+    or release.get("profile_digest_excludes") != [
+        "airootfs/usr/share/bifrost/installed-root/usr/share/bifrost/release.json",
+        "airootfs/usr/share/bifrost/alpm/**",
+    ]
+    or not isinstance(iso, dict)
+    or iso.get("file") != f"bifrost-{manifest['version']}-x86_64.iso"
+    or iso.get("bytes") is not None
+    or iso.get("sha256") is not None
+):
+    raise SystemExit("bootstrap package release provenance is not a prepared build input")
+print(package)
 PY
-    chmod 0644 "$TARGET_MOUNT/etc/bifrost/install-state.json"
+}
+
+bootstrap_bifrost_system() {
+    [[ -n $BIFROST_PACKAGE && -f $BIFROST_PACKAGE ]] \
+        || fail installed_assets_missing "The verified bifrost-system bootstrap package is unavailable."
+    local bootstrap_dir="$TARGET_MOUNT/run/bifrost-bootstrap"
+    local package_name fingerprint
+    package_name=${BIFROST_PACKAGE##*/}
+    fingerprint=$(<"$BIFROST_ALPM_DIR/alpm-repository-key.fingerprint")
+    install -d -m 0700 "$bootstrap_dir"
+    install -m 0644 "$BIFROST_PACKAGE" "$bootstrap_dir/$package_name"
+    install -m 0644 "$BIFROST_PACKAGE.sig" "$bootstrap_dir/$package_name.sig"
+    install -m 0644 "$BIFROST_ALPM_DIR/alpm-repository-key.asc" "$bootstrap_dir/repository-key.asc"
+
+    arch-chroot "$TARGET_MOUNT" pacman-key --add /run/bifrost-bootstrap/repository-key.asc \
+        || fail package_trust_failed "The pinned BifrOSt repository key could not be imported."
+    arch-chroot "$TARGET_MOUNT" pacman-key --lsign-key "$fingerprint" \
+        || fail package_trust_failed "The pinned BifrOSt repository key could not be locally trusted."
+
+    TARGET_ROOT=$TARGET_MOUNT python3 - <<'PY'
+import os
+from pathlib import Path
+
+root = Path(os.environ["TARGET_ROOT"])
+source = root / "etc/pacman.conf"
+destination = root / "run/bifrost-bootstrap/pacman.conf"
+lines = source.read_text(encoding="utf-8").splitlines()
+result = []
+in_options = False
+set_local_level = False
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        if in_options and not set_local_level:
+            result.append("LocalFileSigLevel = Required")
+            set_local_level = True
+        in_options = stripped == "[options]"
+    if in_options and stripped.startswith("LocalFileSigLevel"):
+        if not set_local_level:
+            result.append("LocalFileSigLevel = Required")
+            set_local_level = True
+        continue
+    result.append(line)
+if in_options and not set_local_level:
+    result.append("LocalFileSigLevel = Required")
+if not set_local_level:
+    raise SystemExit("[options] is missing from the installed pacman configuration")
+destination.write_text("\n".join(result) + "\n", encoding="utf-8")
+PY
+    arch-chroot "$TARGET_MOUNT" pacman --config /run/bifrost-bootstrap/pacman.conf \
+        -U --noconfirm "/run/bifrost-bootstrap/$package_name" \
+        || fail package_install_failed "The signed bifrost-system bootstrap package could not be registered."
+
+    [[ -f $TARGET_MOUNT$BIFROST_REPOSITORY_INCLUDE ]] \
+        || fail repository_config_missing "The bifrost-system package did not install its repository configuration."
+    grep -qx 'SigLevel = PackageRequired DatabaseRequired' "$TARGET_MOUNT$BIFROST_REPOSITORY_INCLUDE" \
+        || fail repository_config_invalid "The BifrOSt repository does not require package and database signatures."
+    grep -qx '\[bifrost\]' "$TARGET_MOUNT$BIFROST_REPOSITORY_INCLUDE" \
+        || fail repository_config_invalid "The installed package repository is not narrowly named bifrost."
+    grep -qx 'Usage = Sync Search Upgrade' "$TARGET_MOUNT$BIFROST_REPOSITORY_INCLUDE" \
+        || fail repository_config_invalid "The BifrOSt repository is not restricted to synchronization, search, and upgrades."
+    grep -Fqx 'Server = https://olibuijr.github.io/BifrOSt/alpm/$arch' "$TARGET_MOUNT$BIFROST_REPOSITORY_INCLUDE" \
+        || fail repository_config_invalid "The BifrOSt repository URL is not the pinned HTTPS endpoint."
+    TARGET_ROOT=$TARGET_MOUNT python3 - <<'PY'
+import os
+from pathlib import Path
+
+path = Path(os.environ["TARGET_ROOT"]) / "etc/pacman.conf"
+include = "Include = /etc/pacman.conf.d/bifrost.conf"
+lines = path.read_text(encoding="utf-8").splitlines()
+if include not in lines:
+    lines.extend(("", "# Signed BifrOSt system package repository; official Arch repositories remain first.", include))
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+    rm -rf -- "$bootstrap_dir"
+}
+
+apply_installed_experience() {
+    arch-chroot "$TARGET_MOUNT" pacman -Q bifrost-system >/dev/null \
+        || fail installed_assets_missing "The installed bifrost-system package is missing."
+    local packaged_asset
+    for packaged_asset in \
+        /usr/share/bifrost/os-release \
+        /usr/share/backgrounds/bifrost/bifrost-aurora.png \
+        /usr/share/bifrost/branding/bifrost-mark.svg \
+        /usr/share/icons/hicolor/scalable/apps/bifrost.svg \
+        /usr/share/cosmic/com.system76.CosmicBackground/v1/all \
+        /usr/share/plymouth/themes/bifrost/bifrost.plymouth \
+        /etc/plymouth/plymouthd.conf \
+        /etc/systemd/system/plymouth-quit.service.d/bifrost.conf
+    do
+        [[ -e $TARGET_MOUNT$packaged_asset ]] \
+            || fail installed_assets_missing "The bifrost-system package omitted $packaged_asset."
+    done
+    ln -snf ../usr/share/bifrost/os-release "$TARGET_MOUNT/etc/os-release"
+    install -d -m 0755 "$TARGET_MOUNT/etc/bifrost"
 
     [[ -f $TARGET_MOUNT/etc/os-release ]] || fail branding_missing "Installed BifrOSt identity is missing."
     grep -qx 'ID=bifrost' "$TARGET_MOUNT/etc/os-release" || fail branding_invalid "Installed BifrOSt identity is invalid."
 
-    local username full_name keyboard_layout
+    local username full_name keyboard_layout selected_locale
     username=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["options"]["system_defaults"]["username"])' "$PLAN")
     full_name=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["options"]["system_defaults"]["full_name"])' "$PLAN")
     keyboard_layout=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["options"]["system_defaults"]["keyboard_layout"])' "$PLAN")
+    selected_locale=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["options"]["system_defaults"]["locale"])' "$PLAN")
+    SELECTED_LOCALE=$selected_locale TARGET_ROOT=$TARGET_MOUNT python3 - <<'PY'
+import os
+from pathlib import Path
+
+root = Path(os.environ["TARGET_ROOT"])
+selected = os.environ["SELECTED_LOCALE"]
+locales = list(dict.fromkeys(("is_IS.UTF-8", selected)))
+(root / "etc/locale.gen").write_text("".join(f"{item} UTF-8\n" for item in locales), encoding="utf-8")
+languages = list(dict.fromkeys((selected.split("_", 1)[0], "is", "en")))
+(root / "etc/locale.conf").write_text(
+    f"LANG={selected}\nLANGUAGE={':'.join(languages)}\n", encoding="utf-8"
+)
+PY
+    chmod 0644 "$TARGET_MOUNT/etc/locale.gen" "$TARGET_MOUNT/etc/locale.conf"
     printf 'KEYMAP=%s\nFONT=default8x16\n' "$keyboard_layout" >"$TARGET_MOUNT/etc/vconsole.conf"
+    chmod 0644 "$TARGET_MOUNT/etc/vconsole.conf"
+    arch-chroot "$TARGET_MOUNT" locale-gen
     if [[ -n $full_name ]]; then
         arch-chroot "$TARGET_MOUNT" chfn -f "$full_name" "$username"
     fi
@@ -883,6 +1210,45 @@ verify_installation() {
     [[ -d $TARGET_MOUNT/etc && -d $TARGET_MOUNT/boot ]] || fail target_incomplete "The installed system layout is incomplete."
     bootctl --root="$TARGET_MOUNT" --esp-path=/boot is-installed >/dev/null || fail bootloader_missing "systemd-boot is not installed on the EFI system partition."
     [[ -f $TARGET_MOUNT/boot/EFI/systemd/systemd-bootx64.efi || -f $TARGET_MOUNT/boot/EFI/BOOT/BOOTX64.EFI ]] || fail bootloader_missing "No systemd-boot EFI binary was found."
+    arch-chroot "$TARGET_MOUNT" pacman -Qk bifrost-system >/dev/null \
+        || fail package_ownership_invalid "The installed bifrost-system payload is incomplete."
+    arch-chroot "$TARGET_MOUNT" pacman -Qo \
+        /usr/bin/bifrost-recovery-info \
+        /usr/bin/bifrost-welcome \
+        /usr/share/applications/org.bifrost.RecoveryInfo.desktop \
+        /etc/xdg/autostart/org.bifrost.Welcome.desktop \
+        /usr/share/bifrost/os-release \
+        /usr/share/backgrounds/bifrost/bifrost-aurora.png \
+        /usr/share/bifrost/branding/bifrost-mark.svg \
+        /usr/share/icons/hicolor/scalable/apps/bifrost.svg \
+        /usr/share/cosmic/com.system76.CosmicBackground/v1/all \
+        /usr/share/plymouth/themes/bifrost/bifrost.plymouth \
+        /etc/plymouth/plymouthd.conf \
+        /etc/systemd/system/plymouth-quit.service.d/bifrost.conf >/dev/null \
+        || fail package_ownership_invalid "Critical BifrOSt executables or desktop assets are not package-owned."
+    arch-chroot "$TARGET_MOUNT" pacman -Qlq bifrost-system >"$RUNTIME_DIR/bifrost-owned-paths" \
+        || fail package_ownership_invalid "The bifrost-system ownership inventory is unavailable."
+    INSTALLED_SOURCE=$INSTALLED_ROOT OWNED_PATHS="$RUNTIME_DIR/bifrost-owned-paths" python3 - <<'PY' \
+        || fail package_ownership_invalid "Not every BifrOSt installed-root payload file is owned by bifrost-system."
+import os
+from pathlib import Path
+
+source = Path(os.environ["INSTALLED_SOURCE"])
+owned = {
+    line.rstrip("/")
+    for line in Path(os.environ["OWNED_PATHS"]).read_text(encoding="utf-8").splitlines()
+}
+required = {
+    "/" + path.relative_to(source).as_posix()
+    for path in source.rglob("*")
+    if (path.is_file() or path.is_symlink())
+    and "__pycache__" not in path.parts
+    and path.suffix not in {".pyc", ".pyo"}
+}
+missing = sorted(required - owned)
+if missing:
+    raise SystemExit("unowned installed payload: " + ", ".join(missing))
+PY
 
     local kernel
     for kernel in linux linux-lts; do
@@ -893,10 +1259,19 @@ verify_installation() {
     shopt -s nullglob
     local entries=("$TARGET_MOUNT"/boot/loader/entries/*.conf)
     (( ${#entries[@]} > 0 )) || fail boot_entry_missing "No systemd-boot loader entries were generated."
-    grep -qE '^linux[[:space:]]+/vmlinuz-linux([[:space:]]|$)' "${entries[@]}" || fail boot_entry_invalid "The linux loader entry is missing its kernel."
-    grep -qE '^initrd[[:space:]]+/initramfs-linux\.img([[:space:]]|$)' "${entries[@]}" || fail boot_entry_invalid "The linux loader entry is missing its initramfs."
-    grep -qE '^linux[[:space:]]+/vmlinuz-linux-lts([[:space:]]|$)' "${entries[@]}" || fail boot_entry_invalid "The linux-lts loader entry is missing its kernel."
-    grep -qE '^initrd[[:space:]]+/initramfs-linux-lts\.img([[:space:]]|$)' "${entries[@]}" || fail boot_entry_invalid "The linux-lts loader entry is missing its initramfs."
+    local linux_entry=0 linux_lts_entry=0 entry
+    for entry in "${entries[@]}"; do
+        if grep -qE '^linux[[:space:]]+/vmlinuz-linux([[:space:]]|$)' "$entry" \
+            && grep -qE '^initrd[[:space:]]+/initramfs-linux\.img([[:space:]]|$)' "$entry"; then
+            linux_entry=1
+        fi
+        if grep -qE '^linux[[:space:]]+/vmlinuz-linux-lts([[:space:]]|$)' "$entry" \
+            && grep -qE '^initrd[[:space:]]+/initramfs-linux-lts\.img([[:space:]]|$)' "$entry"; then
+            linux_lts_entry=1
+        fi
+    done
+    (( linux_entry == 1 )) || fail boot_entry_invalid "No single linux loader entry contains both its kernel and initramfs."
+    (( linux_lts_entry == 1 )) || fail boot_entry_invalid "No single linux-lts loader entry contains both its kernel and initramfs."
 
     local encrypted
     encrypted=$(python3 -c 'import json,sys; print("1" if json.load(open(sys.argv[1]))["options"]["encryption"] else "0")' "$PLAN")
@@ -923,6 +1298,186 @@ verify_installation() {
         done < <(lsblk -nrpo PATH,TYPE,FSTYPE "$target_path")
         (( btrfs_found == 1 )) || fail filesystem_layout_invalid "The standard root partition is not Btrfs."
     fi
+    local expected_locale expected_keymap locale_inventory
+    expected_locale=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["options"]["system_defaults"]["locale"])' "$PLAN")
+    expected_keymap=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["options"]["system_defaults"]["keyboard_layout"])' "$PLAN")
+    EXPECTED_LOCALE=$expected_locale EXPECTED_KEYMAP=$expected_keymap TARGET_ROOT=$TARGET_MOUNT python3 - <<'PY' \
+        || fail locale_state_invalid "Installed locale or virtual-console configuration is not deterministic."
+import os
+from pathlib import Path
+
+root = Path(os.environ["TARGET_ROOT"])
+expected = os.environ["EXPECTED_LOCALE"]
+keymap = os.environ["EXPECTED_KEYMAP"]
+active = {
+    line.split()[0]
+    for line in (root / "etc/locale.gen").read_text(encoding="utf-8").splitlines()
+    if line and not line.lstrip().startswith("#")
+}
+if "is_IS.UTF-8" not in active or expected not in active:
+    raise SystemExit("required generated locale declarations are missing")
+locale_conf = dict(
+    line.split("=", 1)
+    for line in (root / "etc/locale.conf").read_text(encoding="utf-8").splitlines()
+    if "=" in line
+)
+if locale_conf.get("LANG") != expected:
+    raise SystemExit("LANG does not match the selected locale")
+vconsole = dict(
+    line.split("=", 1)
+    for line in (root / "etc/vconsole.conf").read_text(encoding="utf-8").splitlines()
+    if "=" in line
+)
+if vconsole != {"KEYMAP": keymap, "FONT": "default8x16"}:
+    raise SystemExit("vconsole state does not match the selected keyboard")
+PY
+    locale_inventory=$(arch-chroot "$TARGET_MOUNT" locale -a) \
+        || fail locale_state_invalid "Installed generated locales cannot be enumerated."
+    LOCALE_INVENTORY=$locale_inventory EXPECTED_LOCALE=$expected_locale python3 - <<'PY' \
+        || fail locale_state_invalid "Installed locale archive lacks Icelandic or the selected locale."
+import os
+
+normalize = lambda value: "".join(character for character in value.lower() if character.isalnum())
+available = {normalize(line) for line in os.environ["LOCALE_INVENTORY"].splitlines()}
+required = {normalize("is_IS.UTF-8"), normalize(os.environ["EXPECTED_LOCALE"])}
+if not required <= available:
+    raise SystemExit("generated locale inventory is incomplete")
+PY
+}
+
+
+persist_success_evidence() {
+    [[ -f $TARGET_MOUNT$RELEASE_PATH ]] || return 1
+    if [[ -f /var/log/archinstall/install.log ]]; then
+        redact_file /var/log/archinstall/install.log "$RUN_DIR/archinstall.log" || return 1
+    fi
+    CURRENT_PHASE=complete
+    write_status success "" "Installation completed and boot artifacts, locale state, and persistent evidence were verified." || return 1
+    redact_file "$RAW_LOG" "$RUN_DIR/backend.log" || return 1
+    python3 - "$PLAN" "$RUN_DIR" "$TARGET_MOUNT" "$TARGET_LOG_DIR" "$TARGET_MOUNT$RELEASE_PATH" "$RUN_ID" <<'PY' || return 1
+import json
+import os
+import re
+import hashlib
+import shutil
+import sys
+from pathlib import Path
+plan_path, live_run, target_root, relative_log, release_path = map(Path, sys.argv[1:6])
+run_id = sys.argv[6]
+plan = json.loads(plan_path.read_text(encoding="utf-8"))
+release_bytes = release_path.read_bytes()
+release = json.loads(release_bytes)
+required_release = ("version", "source_revision", "source_date_epoch", "build_id")
+revision = release.get("source_revision")
+epoch = release.get("source_date_epoch")
+expected_build_id = (
+    f"bifrost-{release.get('version')}-{revision[:12]}-{epoch}"
+    if isinstance(revision, str) and isinstance(epoch, int) and not isinstance(epoch, bool)
+    else None
+)
+if (
+    release.get("schema_version") != 1
+    or release.get("provenance_status") != "build-input"
+    or not isinstance(revision, str)
+    or not re.fullmatch(r"[0-9a-f]{40}", revision)
+    or not isinstance(epoch, int)
+    or isinstance(epoch, bool)
+    or epoch <= 0
+    or release.get("build_id") != expected_build_id
+    or not re.fullmatch(r"[0-9a-f]{64}", str(release.get("profile_sha256", "")))
+):
+    raise SystemExit("installed release provenance is not a prepared build input")
+
+log_root = target_root / relative_log.relative_to("/")
+final = log_root
+staging = log_root.parent / f".{run_id}.tmp"
+state_path = target_root / "etc/bifrost/install-state.json"
+state_tmp = state_path.with_name(f".{state_path.name}.{run_id}.tmp")
+renamed = False
+state_replaced = False
+try:
+    log_root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(log_root.parent, 0o700)
+    if final.exists() or staging.exists():
+        raise FileExistsError("installer evidence destination already exists")
+    staging.mkdir(mode=0o700)
+    names = ("plan.json", "archinstall.json", "status.json", "backend.log", "archinstall.log")
+    for name in names:
+        source = live_run / name
+        if source.is_file():
+            destination = staging / name
+            with source.open("rb") as input_file, destination.open("xb") as output_file:
+                shutil.copyfileobj(input_file, output_file)
+                output_file.flush()
+                os.fsync(output_file.fileno())
+            os.chmod(destination, 0o600)
+    for required in ("plan.json", "archinstall.json", "status.json", "backend.log", "archinstall.log"):
+        if not (staging / required).is_file():
+            raise FileNotFoundError(f"final installer evidence lacks {required}")
+    os.rename(staging, final)
+    renamed = True
+    directory_fd = os.open(final.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+    if (final.stat().st_mode & 0o777) != 0o700 or final.stat().st_uid != 0:
+        raise PermissionError("persistent installer evidence directory is not root-only")
+    for required in ("plan.json", "archinstall.json", "status.json", "backend.log", "archinstall.log"):
+        metadata = (final / required).stat()
+        if (metadata.st_mode & 0o777) != 0o600 or metadata.st_uid != 0:
+            raise PermissionError(f"persistent installer evidence has unsafe permissions: {required}")
+
+    defaults = plan["options"]["system_defaults"]
+    state = {
+        "schema_version": 2,
+        "encryption": plan["options"]["encryption"],
+        "profiles": plan["options"]["profiles"],
+        "run_id": run_id,
+        "source_mode": plan["options"]["source_mode"],
+        "installer_language": plan["options"]["installer_language"],
+        "system": {
+            "locale": defaults["locale"],
+            "keyboard_layout": defaults["keyboard_layout"],
+            "timezone": defaults["timezone"],
+        },
+        "installer_evidence": relative_log.as_posix(),
+        "release": {
+            "path": "/usr/share/bifrost/release.json",
+            "sha256": hashlib.sha256(release_bytes).hexdigest(),
+            **{field: release[field] for field in required_release},
+            "provenance_status": release["provenance_status"],
+        },
+    }
+    state_path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+    with state_tmp.open("x", encoding="utf-8") as output:
+        json.dump(state, output, indent=2, ensure_ascii=False)
+        output.write("\n")
+        output.flush()
+        os.fsync(output.fileno())
+    os.chmod(state_tmp, 0o644)
+    os.replace(state_tmp, state_path)
+    state_replaced = True
+    state_directory_fd = os.open(state_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(state_directory_fd)
+    finally:
+        os.close(state_directory_fd)
+    state_metadata = state_path.stat()
+    if ((state_metadata.st_mode & 0o777) != 0o644 or state_metadata.st_uid != 0
+            or json.loads(state_path.read_text(encoding="utf-8")) != state):
+        raise RuntimeError("persistent install state verification failed")
+except Exception:
+    state_tmp.unlink(missing_ok=True)
+    if state_replaced:
+        state_path.unlink(missing_ok=True)
+    if renamed:
+        shutil.rmtree(final, ignore_errors=True)
+    else:
+        shutil.rmtree(staging, ignore_errors=True)
+    raise
+PY
+    TARGET_EVIDENCE_PERSISTED=1 FINAL_SUCCESS=1
 }
 
 phase preflight "Validating request, UEFI environment, secrets, and selected profiles."
@@ -935,6 +1490,8 @@ validate_target || fail target_refused "The selected disk failed identity or saf
 readonly SOURCE_MODE=$(source_mode)
 phase source "Verifying the complete package source before disk changes."
 validate_package_source "$SOURCE_MODE"
+BIFROST_PACKAGE=$(validate_bifrost_package) \
+    || fail package_source_unverified "The signed bifrost-system bootstrap package failed verification."
 
 phase plan "Validating the generated archinstall disk and encryption configuration."
 archinstall_command "$SOURCE_MODE" --dry-run || fail archinstall_config_invalid "archinstall rejected the generated configuration before disk changes."
@@ -942,6 +1499,8 @@ archinstall_command "$SOURCE_MODE" --dry-run || fail archinstall_config_invalid 
 phase apply "Revalidating the target immediately before the whole-disk install."
 validate_environment
 validate_package_source "$SOURCE_MODE"
+BIFROST_PACKAGE=$(validate_bifrost_package) \
+    || fail package_source_unverified "The signed bifrost-system bootstrap package changed or failed verification."
 validate_target || fail target_changed "The selected disk changed or became active; no disk was wiped."
 
 write_status applying "" "All preflight checks passed; whole-disk installation is starting."
@@ -953,11 +1512,14 @@ if [[ -f /var/log/archinstall/install.log ]]; then
 fi
 mountpoint -q "$TARGET_MOUNT" || fail target_not_mounted "archinstall finished without a mounted installed system."
 
-phase postinstall "Copying installed-system assets and applying BifrOSt identity."
+phase postinstall "Registering the signed BifrOSt system package and applying system identity."
+bootstrap_bifrost_system
 apply_installed_experience
 
-phase verify "Verifying systemd-boot, kernels, initramfs, and encryption state."
+phase verify "Verifying systemd-boot, kernels, initramfs, encryption, locale, and console state."
 verify_installation
 
-FINAL_SUCCESS=1
+phase evidence "Atomically retaining sanitized installer evidence in the installed system."
+persist_success_evidence || fail evidence_persistence_failed "The installed target could not retain and verify sanitized installer evidence."
+
 exit 0

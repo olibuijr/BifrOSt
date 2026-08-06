@@ -1,0 +1,432 @@
+#!/usr/bin/python3
+"""Accessible maintenance dashboard for an installed BifrOSt system."""
+from __future__ import annotations
+
+from dataclasses import asdict, is_dataclass
+import locale
+import sys
+import threading
+from typing import Any, Callable
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gio, GLib, Gtk
+
+sys.path.insert(0, "/usr/lib/bifrost-maintenance")
+from manager import manager_from_environment  # noqa: E402
+
+TEXT = {
+    "is": {
+        "title": "Viðhald BifrOSt", "subtitle": "Staða, yfirferð og öruggt viðhald kerfisins",
+        "language": "Tungumál", "refresh": "Endurlesa stöðu",
+        "loading": "Sæki nýjustu stöðu án þess að breyta kerfinu…", "working": "Aðgerð í vinnslu…",
+        "refreshed": "Staða endurlesin. Engar breytingar voru gerðar.",
+        "offline": "Netsamband er ekki tiltækt. Staðbundin staða og skýrar villur eru sýndar; engar breytingar voru gerðar.",
+        "error": "Ekki tókst að sækja stöðu", "operation_error": "Aðgerð mistókst",
+        "ack_success": "Arch-fréttirnar voru merktar sem lesnar.",
+        "upgrade_started": "Stjórnandastöð var opnuð fyrir kerfisuppfærsluna.",
+        "status": "Yfirlit",
+        "checked_at": "Staða mynduð {time}",
+        "safe_refresh": "Endurlestur er aðeins til skoðunar. BifrOSt setur aldrei upp kerfisuppfærslur sjálfkrafa og lofar ekki afturköllun kerfis.",
+        "arch": "Arch Linux kerfisuppfærslur",
+        "arch_desc": "Allir kerfispakkar eru uppfærðir saman í einni fullri pacman -Syu færslu eftir yfirferð og auðkenningu.",
+        "arch_empty": "Kerfið er uppfært samkvæmt nýjustu tiltæku upplýsingum.",
+        "updates_available": "{count} uppfærsla/uppfærslur tiltækar",
+        "versions": "Uppsett: {current} · Tiltækt: {available}", "unknown": "Óþekkt",
+        "review_upgrade": "Yfirfara kerfisuppfærslu",
+        "review_upgrade_tip": "Skoða alla færsluna áður en beðið er um stjórnandaheimild",
+        "blocked_news": "Lestu og staðfestu ólesnar Arch-fréttir áður en kerfisuppfærsla er virkjuð.",
+        "blocked_news_error": "Ekki tókst að staðfesta Arch-fréttir. Kerfisuppfærsla er óvirk þar til endurlestur tekst.",
+        "upgrade_review_title": "Yfirfara heila kerfisuppfærslu",
+        "upgrade_review_body": "Stjórnandastöð opnast eftir þessa staðfestingu. Þar er beðið um auðkenningu og lokaheimild fyrir eina fulla pacman -Syu færslu. Uppfærslan er ekki sjálfvirk og BifrOSt lofar ekki afturköllun kerfis.\n\n{packages}",
+        "authorize_upgrade": "Opna stöð og auðkenna", "cancel": "Hætta við",
+        "news": "Arch-fréttir og handvirk inngrip",
+        "news_desc": "Lestu allar ólesnar tilkynningar og fylgdu handvirkum skrefum áður en kerfið er uppfært.",
+        "news_empty": "Engar ólesnar Arch-fréttir fundust.", "unread": "Ólesið",
+        "manual": "Athugaðu hvort handvirkt inngrip sé nauðsynlegt", "published": "Birt {date}",
+        "open_news": "Opna grein", "acknowledge": "Staðfesta að allt hafi verið lesið",
+        "ack_tip": "Merkja sýndar Arch-fréttir sem lesnar", "ack_title": "Staðfesta lestur Arch-frétta?",
+        "ack_body": "Staðfestu aðeins eftir að þú hefur lesið allar sýndar greinar og lokið nauðsynlegum handvirkum skrefum.",
+        "confirm_ack": "Ég hef lesið þær",
+        "payload": "BifrOSt kerfispakki",
+        "payload_desc": "Undirritaður bifrost-system pakki. Hann uppfærist með sömu heilu kerfisfærslu og aðrir Arch-pakkar.",
+        "payload_installed": "Kerfispakki uppsettur", "payload_current": "Uppsett útgáfa",
+        "payload_available": "Tiltæk útgáfa", "payload_update": "Uppfærsla tiltæk", "payload_repository": "Geymsla",
+        "payload_signature": "Undirritun staðfest", "yes": "Já", "no": "Nei",
+        "flatpak": "Fyrsta aðila BifrOSt forrit",
+        "flatpak_desc": "Notar núverandi undirritaða Flatpak-uppfærsluaðstoð; traust og uppfærsluaðgerðir eru ekki tvíteknar hér.",
+        "flatpak_empty": "Engar uppfærslur fyrir BifrOSt forrit fundust.",
+        "open_apps": "Opna uppfærsluaðstoð", "open_apps_tip": "Opna undirritaða BifrOSt Flatpak-uppfærsluaðstoð",
+        "launch_error": "Ekki tókst að opna forritið.",
+        "firmware": "Fastbúnaður",
+        "firmware_desc": "Tiltækar fwupd uppfærslur eru aðeins sýndar hér; fastbúnaður er aldrei settur upp sjálfkrafa.",
+        "firmware_empty": "Engar fastbúnaðaruppfærslur fundust.", "firmware_version": "Tiltæk útgáfa: {version}",
+        "health": "Endurræsing og þjónustuheilsa",
+        "health_desc": "Staða eftir uppfærslur og þjónustur sem systemd merkir bilaðar.",
+        "reboot_required": "Endurræsing nauðsynleg", "reboot_yes": "Já — vistaðu vinnu og endurræstu þegar hentar.",
+        "reboot_no": "Nei", "reboot_evidence": "Ástæða", "system_unit": "Kerfisþjónusta", "user_unit": "Notandaþjónusta",
+        "health_ok": "Engar bilaðar þjónustueiningar fundust.",
+        "logs": "Færsluskrá viðhalds", "logs_desc": "Staðir þar sem niðurstöður kerfis- og BifrOSt viðhalds eru skráðar.",
+        "logs_empty": "Engar færsluskrár eru tiltækar enn.", "log_present": "Tiltæk", "log_absent": "Ekki búin til enn",
+        "not_available": "Ekki tiltækt", "terminal_error": "Ekki tókst að opna stjórnandastöð fyrir uppfærsluna.",
+    },
+    "en": {
+        "title": "BifrOSt Maintenance", "subtitle": "System status, review, and safe maintenance",
+        "language": "Language", "refresh": "Refresh status",
+        "loading": "Reading the latest status without changing the system…", "working": "Operation in progress…",
+        "refreshed": "Status refreshed. No changes were made.",
+        "offline": "The network is unavailable. Local status and explicit errors are shown; no changes were made.",
+        "error": "Could not refresh status", "operation_error": "Operation failed",
+        "ack_success": "The Arch news items were marked as read.",
+        "upgrade_started": "An administrator terminal was opened for the system upgrade.",
+        "status": "Overview",
+        "checked_at": "Status generated {time}",
+        "safe_refresh": "Refresh is read-only. BifrOSt never installs system updates automatically and makes no system rollback promise.",
+        "arch": "Arch Linux system updates",
+        "arch_desc": "All system packages are upgraded together in one complete pacman -Syu transaction after review and authorization.",
+        "arch_empty": "The system is current according to the latest available information.",
+        "updates_available": "{count} update(s) available", "versions": "Installed: {current} · Available: {available}",
+        "unknown": "Unknown", "review_upgrade": "Review system upgrade",
+        "review_upgrade_tip": "Review the complete transaction before requesting administrator authorization",
+        "blocked_news": "Read and acknowledge the unread Arch news before system upgrade is enabled.",
+        "blocked_news_error": "Arch news could not be verified. System upgrade remains disabled until refresh succeeds.",
+        "upgrade_review_title": "Review the complete system upgrade",
+        "upgrade_review_body": "An administrator terminal opens after this confirmation. It requests authorization and final confirmation for one complete pacman -Syu transaction. The upgrade is not automatic, and BifrOSt makes no system rollback promise.\n\n{packages}",
+        "authorize_upgrade": "Open terminal and authorize", "cancel": "Cancel",
+        "news": "Arch news and manual intervention",
+        "news_desc": "Read every unread notice and follow any manual steps before upgrading the system.",
+        "news_empty": "No unread Arch news was found.", "unread": "Unread",
+        "manual": "Check whether manual intervention is required", "published": "Published {date}",
+        "open_news": "Open article", "acknowledge": "Acknowledge all as read",
+        "ack_tip": "Mark the displayed Arch news as read", "ack_title": "Acknowledge the Arch news?",
+        "ack_body": "Only confirm after reading every displayed article and completing any required manual steps.",
+        "confirm_ack": "I have read them",
+        "payload": "BifrOSt system payload",
+        "payload_desc": "The signed bifrost-system package. It is updated in the same complete system transaction as other Arch packages.",
+        "payload_installed": "System payload installed", "payload_current": "Installed version",
+        "payload_available": "Available version", "payload_update": "Update available", "payload_repository": "Repository",
+        "payload_signature": "Signature validated", "yes": "Yes", "no": "No",
+        "flatpak": "First-party BifrOSt apps",
+        "flatpak_desc": "Uses the existing signed Flatpak Update Assistant; trust and update actions are not duplicated here.",
+        "flatpak_empty": "No BifrOSt application updates were found.",
+        "open_apps": "Open Update Assistant", "open_apps_tip": "Open the signed BifrOSt Flatpak Update Assistant",
+        "launch_error": "The application could not be opened.",
+        "firmware": "Firmware",
+        "firmware_desc": "Available fwupd updates are displayed here only; firmware is never installed automatically.",
+        "firmware_empty": "No firmware updates were found.", "firmware_version": "Available version: {version}",
+        "health": "Reboot and service health", "health_desc": "Post-update status and units systemd reports as failed.",
+        "reboot_required": "Reboot required", "reboot_yes": "Yes — save your work and restart when convenient.",
+        "reboot_no": "No", "reboot_evidence": "Reason", "system_unit": "System service", "user_unit": "User service",
+        "health_ok": "No failed service units were found.",
+        "logs": "Maintenance transaction log", "logs_desc": "Locations where system and BifrOSt maintenance results are recorded.",
+        "logs_empty": "No transaction logs are available yet.", "log_present": "Available", "log_absent": "Not created yet",
+        "not_available": "Not available", "terminal_error": "The administrator terminal for the upgrade could not be opened.",
+    },
+}
+
+
+def language() -> str:
+    return "is" if (locale.getlocale()[0] or "").lower().startswith("is") else "en"
+
+
+def plain(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
+        return plain(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [plain(item) for item in value]
+    return value
+
+
+def field(value: Any, name: str, default: Any = None) -> Any:
+    return value.get(name, default) if isinstance(value, dict) else default
+
+
+
+
+class MaintenanceApplication(Adw.Application):
+    def __init__(self) -> None:
+        super().__init__(application_id="org.bifrost.Maintenance")
+        self.language = language()
+        self.manager = manager_from_environment()
+        self.window = self.toolbar = self.toast_overlay = self.refresh_button = self.spinner = None
+        self.language_buttons: list[Gtk.ToggleButton] = []
+        self.snapshot: dict[str, Any] = {}
+        self.busy = False
+        self.view_state = "loading"
+        self.detail = ""
+        self.success_after_refresh = ""
+
+    def do_activate(self) -> None:
+        if self.window:
+            self.window.present()
+            return
+        self.window = Adw.ApplicationWindow(application=self)
+        self.window.set_default_size(900, 760)
+        header = Adw.HeaderBar()
+        languages = Gtk.Box(spacing=6)
+        is_button, en_button = Gtk.ToggleButton(label="Íslenska"), Gtk.ToggleButton(label="English")
+        en_button.set_group(is_button)
+        is_button.set_active(self.language == "is")
+        en_button.set_active(self.language == "en")
+        is_button.connect("toggled", self.change_language, "is")
+        en_button.connect("toggled", self.change_language, "en")
+        languages.append(is_button); languages.append(en_button)
+        self.language_buttons = [is_button, en_button]
+        header.pack_start(languages)
+        self.spinner = Gtk.Spinner(); header.pack_end(self.spinner)
+        self.refresh_button = Gtk.Button(icon_name="view-refresh-symbolic")
+        self.refresh_button.connect("clicked", lambda _button: self.refresh()); header.pack_end(self.refresh_button)
+        self.toolbar = Adw.ToolbarView(); self.toolbar.add_top_bar(header)
+        self.toast_overlay = Adw.ToastOverlay(); self.toast_overlay.set_child(self.toolbar)
+        self.window.set_content(self.toast_overlay)
+        self.render(); self.window.present(); self.refresh()
+
+    def text(self, key: str) -> str:
+        return TEXT[self.language][key]
+
+    def change_language(self, button: Gtk.ToggleButton, code: str) -> None:
+        if button.get_active() and code != self.language:
+            self.language = code; self.render()
+
+    def set_busy(self, busy: bool) -> None:
+        self.busy = busy
+        self.refresh_button.set_sensitive(not busy)
+        for button in self.language_buttons:
+            button.set_sensitive(not busy)
+        self.spinner.start() if busy else self.spinner.stop()
+
+    def row(self, title: str, subtitle: str = "") -> Adw.ActionRow:
+        row = Adw.ActionRow(title=title)
+        if subtitle:
+            row.set_subtitle(subtitle); row.set_subtitle_lines(6)
+        return row
+
+    def action(self, label: str, callback: Callable, tooltip: str = "") -> Gtk.Button:
+        button = Gtk.Button(label=label, valign=Gtk.Align.CENTER)
+        button.connect("clicked", callback); button.set_sensitive(not self.busy)
+        if tooltip: button.set_tooltip_text(tooltip)
+        return button
+
+    def group(self, key: str, description: str) -> Adw.PreferencesGroup:
+        return Adw.PreferencesGroup(title=self.text(key), description=description)
+
+    def error_row(self, status: dict[str, Any]) -> Adw.ActionRow | None:
+        error = field(status, "error")
+        return self.row(field(error, "code", self.text("error")), field(error, "message", "")) if error else None
+
+    def render(self) -> None:
+        if not self.window: return
+        self.window.set_title(self.text("title")); self.refresh_button.set_tooltip_text(self.text("refresh"))
+        page = Adw.PreferencesPage(title=self.text("title"), description=self.text("subtitle"))
+        overview = self.group("status", self.text("safe_refresh"))
+        message = {"loading": self.text("loading"), "working": self.text("working"),
+                   "content": self.text("refreshed"), "success": self.detail, "offline": self.text("offline"),
+                   "error": f'{self.text("error")}: {self.detail}'}.get(self.view_state, self.text("refreshed"))
+        overview.add(self.row(message))
+        generated = field(self.snapshot, "generated_at")
+        if generated is not None and self.view_state not in {"loading", "working", "error"}:
+            try:
+                generated_text = GLib.DateTime.new_from_unix_local(int(generated)).format("%x %X")
+            except (TypeError, ValueError):
+                generated_text = str(generated)
+            overview.add(self.row(self.text("checked_at").format(time=generated_text)))
+        page.add(overview)
+        # Loading/working and hard-error views never leave stale actions visible.
+        if self.view_state in {"content", "success", "offline"}:
+            for group in (self.arch_group(), self.news_group(), self.payload_group(), self.flatpak_group(),
+                          self.firmware_group(), self.health_group(), self.logs_group()):
+                page.add(group)
+        self.toolbar.set_content(page)
+
+    def arch_group(self) -> Adw.PreferencesGroup:
+        status = field(self.snapshot, "arch", {})
+        group = self.group("arch", self.text("arch_desc")); error = self.error_row(status)
+        updates = field(status, "updates", [])
+        if error: group.add(error)
+        elif not updates: group.add(self.row(self.text("arch_empty")))
+        else:
+            for package in updates:
+                group.add(self.row(field(package, "name", self.text("unknown")), self.text("versions").format(
+                    current=field(package, "installed_version", self.text("unknown")),
+                    available=field(package, "available_version", self.text("unknown")))))
+        news_error = field(field(field(self.snapshot, "news", {}), "error", {}), "message", "")
+        blocked = self.text("blocked_news_error") if news_error else (self.text("blocked_news") if self.unread_ids() else "")
+        action = self.row(self.text("updates_available").format(count=len(updates)), blocked)
+        button = self.action(self.text("review_upgrade"), self.review_upgrade, self.text("review_upgrade_tip"))
+        button.add_css_class("suggested-action")
+        button.set_sensitive(not self.busy and bool(updates) and self.news_allows_upgrade() and not error)
+        action.add_suffix(button); group.add(action)
+        return group
+
+    def unread_ids(self) -> list[str]:
+        return list(field(field(self.snapshot, "news", {}), "unread_ids", []))
+
+    def news_allows_upgrade(self) -> bool:
+        status = field(self.snapshot, "news", {})
+        return bool(field(status, "ok", False)) and not self.unread_ids()
+
+    def news_group(self) -> Adw.PreferencesGroup:
+        status = field(self.snapshot, "news", {})
+        group = self.group("news", self.text("news_desc")); error = self.error_row(status)
+        unread = set(self.unread_ids())
+        articles = [item for item in field(status, "items", []) if field(item, "item_id") in unread]
+        if error: group.add(error)
+        elif not articles: group.add(self.row(self.text("news_empty")))
+        else:
+            for article in articles:
+                subtitle = f'{self.text("unread")} · {self.text("published").format(date=field(article, "published", self.text("unknown")))} · {self.text("manual")}'
+                row = self.row(field(article, "title", self.text("unknown")), subtitle)
+                url = field(article, "url", "")
+                if url.startswith(("https://", "http://")):
+                    row.add_suffix(Gtk.LinkButton(uri=url, label=self.text("open_news"), valign=Gtk.Align.CENTER))
+                group.add(row)
+            acknowledge_row = self.row(self.text("acknowledge"))
+            acknowledge_row.add_suffix(self.action(self.text("acknowledge"), self.review_acknowledgement, self.text("ack_tip")))
+            group.add(acknowledge_row)
+        return group
+
+    def payload_group(self) -> Adw.PreferencesGroup:
+        status = field(self.snapshot, "system_payload", {})
+        group = self.group("payload", self.text("payload_desc")); error = self.error_row(status)
+        if error: group.add(error); return group
+        group.add(self.row(self.text("payload_installed"), self.text("yes") if field(status, "installed", False) else self.text("no")))
+        group.add(self.row(self.text("payload_current"), field(status, "installed_version") or self.text("not_available")))
+        group.add(self.row(self.text("payload_available"), field(status, "available_version") or self.text("not_available")))
+        group.add(self.row(self.text("payload_update"), self.text("yes") if field(status, "update_available", False) else self.text("no")))
+        group.add(self.row(self.text("payload_repository"), field(status, "repository") or self.text("not_available")))
+        group.add(self.row(self.text("payload_signature"), self.text("yes") if field(status, "signature_validated", False) else self.text("no")))
+        return group
+
+    def flatpak_group(self) -> Adw.PreferencesGroup:
+        status = field(self.snapshot, "flatpak", {})
+        group = self.group("flatpak", self.text("flatpak_desc")); error = self.error_row(status)
+        updates = field(status, "updates", [])
+        if error: group.add(error)
+        elif not updates: group.add(self.row(self.text("flatpak_empty")))
+        else:
+            for app in updates:
+                group.add(self.row(field(app, "app_id", self.text("unknown")), self.text("versions").format(
+                    current=field(app, "installed_version") or self.text("unknown"),
+                    available=field(app, "available_version", self.text("unknown")))))
+        action = self.row(self.text("open_apps")); action.add_suffix(self.action(self.text("open_apps"), self.open_apps, self.text("open_apps_tip")))
+        group.add(action); return group
+
+    def firmware_group(self) -> Adw.PreferencesGroup:
+        status = field(self.snapshot, "firmware", {})
+        group = self.group("firmware", self.text("firmware_desc")); error = self.error_row(status)
+        updates = field(status, "updates", [])
+        if error: group.add(error)
+        elif not updates: group.add(self.row(self.text("firmware_empty")))
+        else:
+            for update in updates:
+                name = field(update, "device_name", self.text("unknown"))
+                version = self.text("firmware_version").format(version=field(update, "version", self.text("unknown")))
+                group.add(self.row(name, f'{version} · {field(update, "device_id", self.text("unknown"))}'))
+        return group
+
+    def health_group(self) -> Adw.PreferencesGroup:
+        status = field(self.snapshot, "health", {})
+        group = self.group("health", self.text("health_desc"))
+        reboot = field(status, "reboot_required", False)
+        group.add(self.row(self.text("reboot_required"), self.text("reboot_yes") if reboot else self.text("reboot_no")))
+        for evidence in field(status, "reboot_evidence", []): group.add(self.row(self.text("reboot_evidence"), str(evidence)))
+        failed = [(self.text("system_unit"), unit) for unit in field(status, "failed_system_units", [])]
+        failed += [(self.text("user_unit"), unit) for unit in field(status, "failed_user_units", [])]
+        if not failed: group.add(self.row(self.text("health_ok")))
+        for scope, unit in failed:
+            group.add(self.row(field(unit, "unit", self.text("unknown")), f'{scope} · {field(unit, "description", "")}'))
+        for error in field(status, "errors", []): group.add(self.row(field(error, "code", self.text("error")), field(error, "message", "")))
+        return group
+
+    def logs_group(self) -> Adw.PreferencesGroup:
+        status = field(self.snapshot, "transactions", {})
+        group = self.group("logs", self.text("logs_desc")); logs = field(status, "logs", [])
+        if not logs: group.add(self.row(self.text("logs_empty")))
+        for log in logs:
+            state = self.text("log_present") if field(log, "exists", False) else self.text("log_absent")
+            row = self.row(field(log, "name", self.text("unknown")), f'{field(log, "path", "")} · {state}')
+            row.set_subtitle_selectable(True); group.add(row)
+        return group
+
+    def run_backend(self, callback: Callable[[], Any], finish: Callable[[Any], None]) -> None:
+        if self.busy: return
+        self.set_busy(True); self.view_state, self.detail = "working", ""; self.render()
+        def work() -> None:
+            try: result = plain(callback())
+            except Exception as error: GLib.idle_add(self.finish_backend_error, str(error))
+            else: GLib.idle_add(self.finish_backend, finish, result)
+        threading.Thread(target=work, daemon=True, name="bifrost-maintenance-action").start()
+
+    def finish_backend(self, finish: Callable[[Any], None], result: Any) -> bool:
+        self.set_busy(False); finish(result); return GLib.SOURCE_REMOVE
+
+    def finish_backend_error(self, detail: str) -> bool:
+        self.set_busy(False); self.view_state, self.detail = "error", f'{self.text("operation_error")}: {detail}'; self.render()
+        return GLib.SOURCE_REMOVE
+
+    def refresh(self, success: str = "") -> None:
+        if self.busy: return
+        self.success_after_refresh = success; self.set_busy(True); self.view_state, self.detail = "loading", ""; self.render()
+        def work() -> None:
+            try:
+                snapshot = plain(self.manager.refresh())
+                if not isinstance(snapshot, dict): raise TypeError("invalid maintenance status")
+            except Exception as error: GLib.idle_add(self.finish_refresh, None, str(error))
+            else: GLib.idle_add(self.finish_refresh, snapshot, None)
+        threading.Thread(target=work, daemon=True, name="bifrost-maintenance-refresh").start()
+
+    def finish_refresh(self, snapshot: dict[str, Any] | None, error: str | None) -> bool:
+        self.set_busy(False)
+        if error: self.view_state, self.detail = "error", error
+        else:
+            self.snapshot = snapshot or {}
+            news_error = field(field(field(self.snapshot, "news", {}), "error", {}), "code", "")
+            if self.success_after_refresh:
+                self.view_state, self.detail = "success", self.success_after_refresh
+            elif news_error == "news_fetch_failed":
+                self.view_state, self.detail = "offline", ""
+            else:
+                self.view_state, self.detail = "content", ""
+        self.success_after_refresh = ""; self.render(); return GLib.SOURCE_REMOVE
+
+    def review_acknowledgement(self, _button: Gtk.Button) -> None:
+        ids = self.unread_ids()
+        if not ids: return
+        dialog = Adw.MessageDialog.new(self.window, self.text("ack_title"), self.text("ack_body"))
+        dialog.add_response("cancel", self.text("cancel")); dialog.add_response("ack", self.text("confirm_ack"))
+        dialog.set_response_appearance("ack", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("cancel"); dialog.set_close_response("cancel")
+        dialog.connect("response", self.ack_response, ids); dialog.present()
+
+    def ack_response(self, _dialog: Adw.MessageDialog, response: str, ids: list[str]) -> None:
+        if response == "ack": self.run_backend(lambda: self.manager.acknowledge_news(ids), lambda _result: self.refresh(self.text("ack_success")))
+
+    def review_upgrade(self, _button: Gtk.Button) -> None:
+        if not self.news_allows_upgrade(): return
+        updates = field(field(self.snapshot, "arch", {}), "updates", [])
+        packages = "\n".join(f'• {field(item, "name", self.text("unknown"))}' for item in updates)
+        dialog = Adw.MessageDialog.new(self.window, self.text("upgrade_review_title"), self.text("upgrade_review_body").format(packages=packages))
+        dialog.set_body_use_markup(False); dialog.add_response("cancel", self.text("cancel")); dialog.add_response("upgrade", self.text("authorize_upgrade"))
+        dialog.set_response_appearance("upgrade", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("cancel"); dialog.set_close_response("cancel"); dialog.connect("response", self.upgrade_response); dialog.present()
+
+    def upgrade_response(self, _dialog: Adw.MessageDialog, response: str) -> None:
+        if response != "upgrade" or not self.news_allows_upgrade(): return
+        app = Gio.AppInfo.create_from_commandline("bifrost-maintenance-cli upgrade", self.text("title"), Gio.AppInfoCreateFlags.NEEDS_TERMINAL)
+        try: app.launch([], None)
+        except GLib.Error: self.toast_overlay.add_toast(Adw.Toast(title=self.text("terminal_error")))
+        else: self.toast_overlay.add_toast(Adw.Toast(title=self.text("upgrade_started")))
+
+    def open_apps(self, _button: Gtk.Button) -> None:
+        app = Gio.DesktopAppInfo.new("org.bifrost.UpdateAssistant.desktop")
+        try:
+            if app is None: raise RuntimeError
+            app.launch([], None)
+        except (GLib.Error, RuntimeError): self.toast_overlay.add_toast(Adw.Toast(title=self.text("launch_error")))
+
+
+raise SystemExit(MaintenanceApplication().run(sys.argv))

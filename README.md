@@ -10,22 +10,22 @@ BifrOSt is an independent, Icelandic-first developer workstation and live/instal
 
 > ## AÐVÖRUN — VALINN DISKUR EYÐIST
 >
-> BifrOSt 0.2 setur aðeins upp á **heilan disk**. Öll disksneiðing og öll gögn á staðfesta markdiskinum verða fjarlægð. Taktu sannreynt afrit og aftengdu diska sem ekki má eyða.
+> BifrOSt 0.2.1 setur aðeins upp á **heilan disk**. Öll disksneiðing og öll gögn á staðfesta markdiskinum verða fjarlægð. Taktu sannreynt afrit og aftengdu diska sem ekki má eyða.
 >
 > ## WARNING — THE SELECTED DISK WILL BE ERASED
 >
-> BifrOSt 0.2 performs a **whole-disk installation only**. Every partition and all data on the confirmed target are removed. Make a verified backup and disconnect disks that must not be erased. There is no dual-boot or manual-partitioning path.
+> BifrOSt 0.2.1 performs a **whole-disk installation only**. Every partition and all data on the confirmed target are removed. Make a verified backup and disconnect disks that must not be erased. There is no dual-boot or manual-partitioning path.
 
 ![BifrOSt aurora wallpaper](profile/airootfs/usr/share/backgrounds/bifrost/bifrost-aurora.png)
 
-## 0.2 release status
+## 0.2.1 release status
 
-The source version is **0.2.0**. This release does not claim physical-hardware qualification, offline completeness, bit-for-bit reproducibility, rollback, Secure Boot support, or signed artifacts beyond what the release record documents.
+The source version is **0.2.1**. This release does not claim physical-hardware qualification, offline completeness, bit-for-bit reproducibility, operating-system rollback, or Secure Boot support. Artifact signing and installed provenance are claimed only where the release record and independently verified signatures document them.
 
 - Installation requires x86_64 UEFI with Secure Boot disabled.
 - Online installation from signed official Arch repositories is the normal mode.
 - Offline mode is shown only when the medium contains a complete signed schema-v2 local source manifest, trusted keyring/repository, and all required package archives, and that source passes pre-wipe validation. A bootable ISO alone is not an offline-completeness claim.
-- A checksum authenticates the publisher only when its detached signature verifies against a release-key fingerprint obtained through an independent trusted channel. Unsigned artifacts are labeled `.unsigned`.
+- The `0.2.1` release-evidence key is tracked at [`keys/bifrost-release-key.asc`](keys/bifrost-release-key.asc). Its primary fingerprint is `A306 D353 7F15 3830 6CB3 A23B 2C4A 6276 8746 EFB6`; authenticate that fingerprint through an independent trusted channel before treating a checksum signature as publisher authentication. Unsigned artifacts are labeled `.unsigned`.
 - Physical support is limited to explicit Pass entries in the release's [hardware qualification record](docs/hardware-qualification.md). One user-reported `0.2.0` physical run is recorded as Partial; no full physical-hardware Pass is claimed without the tested ISO digest and completed checklist.
 
 ## Whole-disk safety
@@ -36,7 +36,7 @@ Device paths can change. Never identify a disk by `/dev/sd…` or capacity alone
 
 Read [Installation and safety](docs/install-and-safety.md) before using the installer.
 
-## What 0.2 provides
+## What 0.2.1 provides
 
 - Icelandic-first installer and desktop, with English available for critical installation, failure, and recovery messages
 - Whole-disk GPT/Btrfs installation with UEFI systemd-boot
@@ -48,6 +48,7 @@ Read [Installation and safety](docs/install-and-safety.md) before using the inst
 - Icelandic locale (`is_IS.UTF-8`), Icelandic keyboard defaults, and `Atlantic/Reykjavik` timezone
 - COSMIC with original BifrOSt aurora, glacier, basalt, and longship artwork
 - Linux and Linux LTS kernels, NetworkManager, and PipeWire from official Arch repositories
+- A package-owned, signed `bifrost-system` payload updated from its narrowly scoped ALPM repository only through complete `pacman -Syu` transactions
 - A signed, per-user Flatpak catalog and **BifrOSt Update Assistant** for first-party BifrOSt applications
 
 BifrOSt does not replace `pacman`, ship a custom kernel, enable the AUR automatically, or freeze Arch's rolling package versions.
@@ -69,6 +70,42 @@ python3 dispatch-app-release.py \
 ```
 
 The dispatcher hashes each input, rejects refs outside the `org.bifrost` namespace, stages rather than mutates the live repository, signs imported commits and repository metadata, then publishes `release/flatpak-repo/` plus `release/bifrost.flatpakrepo` to GitHub Pages. Run without `--publish` to validate and sign locally first. Protect the signing key and obtain the passphrase through the local pinentry prompt; never pass it on the command line.
+
+## Signed BifrOSt system package
+
+Fresh installations register the first-party installed-system payload as the `bifrost-system` Arch package. Its narrowly scoped `[bifrost]` repository is configured after the official Arch repositories, requires signed packages and repository databases, and is used only to upgrade the already-installed BifrOSt payload. Kernels, the base system, and other distribution packages remain owned and updated by the official Arch repositories. Apply system maintenance only as a complete `sudo pacman -Syu` transaction; BifrOSt does not support partial upgrades, automatic application, operating-system rollback, or Secure Boot.
+
+Release operators use the tracked [`keys/bifrost-alpm-key.asc`](keys/bifrost-alpm-key.asc), its exact primary fingerprint `69D95C1EA4E97AB5FB9580AAFED54F3B9691E1C2`, and an isolated GnuPG home containing exactly the corresponding secret key. The tooling never generates or exports private keys. From the repository root, build and locally verify the signed package, signed database, and ISO bootstrap stage:
+
+```bash
+./generate-release-metadata.py \
+  --prepare-installed profile/airootfs/usr/share/bifrost/installed-root/usr/share/bifrost/release.json \
+  --source-revision "$FULL_COMMIT" \
+  --source-date-epoch "$SOURCE_DATE_EPOCH"
+
+python3 packaging/alpm/build-repository.py \
+  --gpg-homedir /absolute/path/to/isolated-alpm-gnupg \
+  --fingerprint 69D95C1EA4E97AB5FB9580AAFED54F3B9691E1C2 \
+  --public-key keys/bifrost-alpm-key.asc
+
+python3 packaging/alpm/publish-repository.py \
+  --stage release/alpm/x86_64 \
+  --fingerprint 69D95C1EA4E97AB5FB9580AAFED54F3B9691E1C2 \
+  --public-key keys/bifrost-alpm-key.asc
+```
+
+The build reads the upstream package version from `VERSION` and the positive package-release revision from `packaging/bifrost-system/PKGBUILD`, packages the complete tracked `installed-root` payload plus installed branding/configuration while excluding interpreter caches, and stages the verified bootstrap inputs under the ArchISO profile. Publication is a separate explicit operation and repeats signature, fingerprint, checksum, package-name, package-version, and repository-boundary verification before changing GitHub Pages. It refuses to replace the published repository unless the candidate package version is strictly newer.
+
+```bash
+python3 packaging/alpm/publish-repository.py \
+  --stage release/alpm/x86_64 \
+  --fingerprint 69D95C1EA4E97AB5FB9580AAFED54F3B9691E1C2 \
+  --public-key keys/bifrost-alpm-key.asc \
+  --publish
+```
+
+This publishes only `alpm/x86_64` at `https://olibuijr.github.io/BifrOSt/alpm/$arch`; it does not alter the signed Flatpak repository. The signed repository and ISO bootstrap each carry the exact tracked ALPM public key and fingerprint. That internal consistency is authenticated only when the enclosing `0.2.1` ISO or source tag is independently authenticated.
+
 
 ## Documentation
 

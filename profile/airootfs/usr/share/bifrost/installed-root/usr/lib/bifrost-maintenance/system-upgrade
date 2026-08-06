@@ -1,0 +1,311 @@
+#!/usr/bin/python3
+"""Polkit entry point for one complete, explicitly authorized pacman transaction."""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+from pathlib import Path
+import pwd
+import stat
+import subprocess
+import sys
+import time
+import uuid
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from manager import MaintenanceError, MaintenanceManager, NEWS_ID  # noqa: E402
+
+MAX_REQUEST_BYTES = 64 * 1024
+MAX_OUTPUT_LOG_BYTES = 16 * 1024 * 1024
+REQUEST_DIRECTORY = Path("/run/bifrost-maintenance/requests")
+UPGRADE_LOCK = Path("/run/lock/bifrost-maintenance-system-upgrade.lock")
+PACMAN_LOCK = Path("/var/lib/pacman/db.lck")
+TRANSACTION_LOG = Path("/var/log/bifrost-maintenance/transactions.jsonl")
+TRANSACTION_DIRECTORY = TRANSACTION_LOG.parent
+PACMAN = "/usr/bin/pacman"
+EXPECTED_KEYS = frozenset({"schema_version", "operation", "news_ids", "acknowledged_news_ids"})
+
+
+class HelperError(RuntimeError):
+    pass
+
+
+def _ids(document: dict[str, object], key: str) -> tuple[str, ...]:
+    values = document.get(key)
+    if not isinstance(values, list):
+        raise HelperError(f"{key} must be a JSON array")
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or not NEWS_ID.fullmatch(value) or value in seen:
+            raise HelperError(f"{key} contains an invalid or duplicate item ID")
+        result.append(value)
+        seen.add(value)
+    return tuple(result)
+
+
+def parse_request(data: bytes) -> dict[str, object]:
+    if not data or len(data) > MAX_REQUEST_BYTES:
+        raise HelperError("the upgrade request is empty or too large")
+    try:
+        document = json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise HelperError("the upgrade request is not valid UTF-8 JSON") from error
+    if not isinstance(document, dict) or set(document) != EXPECTED_KEYS:
+        raise HelperError("the upgrade request has fields outside the supported schema")
+    if document.get("schema_version") != 1 or document.get("operation") != "system-upgrade":
+        raise HelperError("the upgrade request operation or schema is unsupported")
+    news_ids = _ids(document, "news_ids")
+    acknowledged_ids = _ids(document, "acknowledged_news_ids")
+    if not set(acknowledged_ids).issubset(news_ids):
+        raise HelperError("acknowledged news IDs are outside the requested news snapshot")
+    return document
+
+
+def pacman_command() -> tuple[str, ...]:
+    """Return the only package-manager command this helper can execute."""
+    return (PACMAN, "-Syu")
+
+
+def _secure_directory(path: Path, mode: int) -> None:
+    path.mkdir(mode=mode, parents=True, exist_ok=True)
+    metadata = path.lstat()
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_mode & 0o022:
+        raise HelperError(f"unsafe privileged directory: {path}")
+    os.chmod(path, mode)
+
+
+def _materialize_root_request(data: bytes) -> Path:
+    _secure_directory(REQUEST_DIRECTORY.parent, 0o700)
+    _secure_directory(REQUEST_DIRECTORY, 0o700)
+    path = REQUEST_DIRECTORY / f"{uuid.uuid4().hex}.json"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        metadata = path.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise HelperError("the privileged request file is not a root-owned private regular file")
+        directory = os.open(REQUEST_DIRECTORY, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return path
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def _invoking_user() -> tuple[int, Path]:
+    value = os.environ.get("PKEXEC_UID", "")
+    if not value.isascii() or not value.isdigit():
+        raise HelperError("the invoking user identity is unavailable")
+    uid = int(value)
+    if uid <= 0:
+        raise HelperError("a non-root invoking user is required")
+    try:
+        account = pwd.getpwuid(uid)
+    except KeyError as error:
+        raise HelperError("the invoking user no longer exists") from error
+    home = Path(account.pw_dir)
+    if not home.is_absolute():
+        raise HelperError("the invoking user has an invalid home directory")
+    return uid, home
+
+
+def _validate_news_request(document: dict[str, object], home: Path) -> None:
+    manager = MaintenanceManager(news_state_file=home / ".local/state/bifrost-maintenance/news.json")
+    try:
+        items = manager._news_items()
+    except MaintenanceError as error:
+        raise HelperError(f"cannot verify current Arch news: {error.message}") from error
+    current_ids = tuple(item.item_id for item in items)
+    requested_ids = _ids(document, "news_ids")
+    if current_ids != requested_ids:
+        raise HelperError("Arch news changed after authorization; refresh and review it again")
+    if any(not item.acknowledged for item in items):
+        raise HelperError("the system upgrade is blocked by unread Arch news")
+
+
+def _append_log(document: dict[str, object]) -> None:
+    _secure_directory(TRANSACTION_LOG.parent, 0o700)
+    payload = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    descriptor = os.open(
+        TRANSACTION_LOG,
+        os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW,
+        0o600,
+    )
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_mode & 0o077:
+            raise HelperError("the transaction log is not a root-owned private regular file")
+        os.write(descriptor, payload)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _acquire_upgrade_lock() -> int:
+    descriptor = os.open(UPGRADE_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    metadata = os.fstat(descriptor)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_mode & 0o077:
+        os.close(descriptor)
+        raise HelperError("the system-upgrade lock is unsafe")
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as error:
+        os.close(descriptor)
+        raise HelperError("another BifrOSt system upgrade is already running") from error
+    return descriptor
+
+
+def _run_complete_upgrade(uid: int) -> dict[str, object]:
+    lock_descriptor = _acquire_upgrade_lock()
+    try:
+        if PACMAN_LOCK.exists() or PACMAN_LOCK.is_symlink():
+            raise HelperError("another package-manager transaction is active")
+        started_at = int(time.time())
+        transaction_id = f"{started_at}-{uuid.uuid4().hex}"
+        output_path = TRANSACTION_DIRECTORY / f"system-upgrade-{transaction_id}.log"
+        _secure_directory(TRANSACTION_DIRECTORY, 0o700)
+        output_descriptor = os.open(
+            output_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        output_metadata = os.fstat(output_descriptor)
+        if (
+            not stat.S_ISREG(output_metadata.st_mode)
+            or output_metadata.st_uid != 0
+            or output_metadata.st_mode & 0o077
+        ):
+            os.close(output_descriptor)
+            output_path.unlink(missing_ok=True)
+            raise HelperError("the package-manager output log is unsafe")
+        _append_log(
+            {
+                "event": "started",
+                "invoking_uid": uid,
+                "output_log": str(output_path),
+                "started_at": started_at,
+                "transaction_id": transaction_id,
+            }
+        )
+        environment = {
+            "HOME": "/root",
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+            "PATH": "/usr/bin",
+        }
+        try:
+            terminal = open("/dev/tty", "r+b", buffering=0)
+        except OSError as error:
+            os.close(output_descriptor)
+            output_path.unlink(missing_ok=True)
+            raise HelperError("an interactive controlling terminal is required for final pacman confirmation") from error
+        process: subprocess.Popen[bytes] | None = None
+        remaining_log_bytes = MAX_OUTPUT_LOG_BYTES
+        output_truncated = False
+        try:
+            with os.fdopen(output_descriptor, "wb", buffering=0) as output:
+                process = subprocess.Popen(
+                    list(pacman_command()),
+                    stdin=terminal,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    env=environment,
+                )
+                assert process.stdout is not None
+                while chunk := process.stdout.read1(64 * 1024):
+                    if remaining_log_bytes:
+                        saved = chunk[:remaining_log_bytes]
+                        output.write(saved)
+                        remaining_log_bytes -= len(saved)
+                        output_truncated = output_truncated or len(saved) != len(chunk)
+                    else:
+                        output_truncated = True
+                    terminal.write(chunk)
+                process.stdout.close()
+                raw_returncode = process.wait()
+                os.fsync(output.fileno())
+        except Exception:
+            if process is not None and process.poll() is None:
+                process.terminate()
+                process.wait()
+            raise
+        finally:
+            terminal.close()
+        returncode = raw_returncode if raw_returncode >= 0 else 128 - raw_returncode
+        finished_at = int(time.time())
+        _append_log(
+            {
+                "event": "finished",
+                "finished_at": finished_at,
+                "invoking_uid": uid,
+                "output_log": str(output_path),
+                "output_truncated": output_truncated,
+                "returncode": returncode,
+                "started_at": started_at,
+                "transaction_id": transaction_id,
+            }
+        )
+        return {
+            "completed": returncode == 0,
+            "returncode": returncode,
+            "transaction_id": transaction_id,
+            "transaction_log": str(output_path),
+        }
+    finally:
+        os.close(lock_descriptor)
+
+
+def main(arguments: list[str] | None = None) -> int:
+    arguments = sys.argv[1:] if arguments is None else arguments
+    if arguments:
+        print("system-upgrade accepts no command-line arguments", file=sys.stderr)
+        return 2
+    if os.geteuid() != 0:
+        print("system-upgrade must be authorized through polkit", file=sys.stderr)
+        return 2
+    try:
+        data = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
+        request_path = _materialize_root_request(data)
+        try:
+            document = parse_request(request_path.read_bytes())
+            uid, home = _invoking_user()
+            _validate_news_request(document, home)
+            result = _run_complete_upgrade(uid)
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+            return int(result["returncode"])
+        finally:
+            request_path.unlink(missing_ok=True)
+    except HelperError as error:
+        print(
+            json.dumps(
+                {"completed": False, "error": {"code": "upgrade_refused", "message": str(error)[:300]}},
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    except OSError as error:
+        print(
+            json.dumps(
+                {"completed": False, "error": {"code": "upgrade_failed", "message": str(error)[:300]}},
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            file=sys.stderr,
+        )
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

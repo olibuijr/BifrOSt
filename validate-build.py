@@ -15,7 +15,7 @@ import subprocess
 import sys
 import tokenize
 
-CURRENT_VERSION = "0.2.0"
+VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 SKIP_DIRS = {".git", "__pycache__", "out", "release", "vm", "work"}
 FORBIDDEN_TRACKED = (
     "*.iso",
@@ -197,47 +197,63 @@ def read_os_release(path: Path) -> dict[str, str]:
     return values
 
 
-def profile_values(root: Path, version: str | None, epoch: int | None) -> list[str]:
+def read_version(root: Path) -> str:
+    path = root / "VERSION"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        raise ValidationError(f"cannot read canonical VERSION: {error}") from error
+    if len(lines) != 1 or not VERSION_PATTERN.fullmatch(lines[0]):
+        raise ValidationError("VERSION must contain exactly one semantic release version")
+    return lines[0]
+
+
+def profile_values(root: Path, epoch: int | None) -> list[str]:
     profile = root / "profile/profiledef.sh"
     command = [
         "bash",
         "-c",
-        'declare -A file_permissions=(); source "$1" && printf "%s\\n" "$iso_name" "$iso_label" "$iso_version" "${buildmodes[*]}" "${bootmodes[*]}" "${file_permissions[/usr/local/bin/bifrost-installer]}" "${file_permissions[/usr/local/lib/bifrost-installer-backend]}"',
+        'declare -A file_permissions=(); source "$1" && printf "%s\\n" "$iso_name" "$iso_label" "$iso_version" "${buildmodes[*]}" "${bootmodes[*]}" "${file_permissions[/usr/local/bin/bifrost-installer]}" "${file_permissions[/usr/local/lib/bifrost-installer-backend]}" "${file_permissions[/usr/share/bifrost/installed-root/usr/share/bifrost/release.json]}"',
         "validate-profile",
         str(profile),
     ]
     environment = os.environ.copy()
     environment.pop("BIFROST_VERSION", None)
     environment.pop("SOURCE_DATE_EPOCH", None)
-    if version is not None:
-        environment["BIFROST_VERSION"] = version
     if epoch is not None:
         environment["SOURCE_DATE_EPOCH"] = str(epoch)
     return run_checked(command, cwd=root, env=environment).splitlines()
 
 
 def validate_profile(root: Path) -> None:
-    default = profile_values(root, None, None)
+    version = read_version(root)
+    version_token = re.sub(r"[^A-Z0-9]", "", version.upper())[:12]
+    default = profile_values(root, None)
     expected_default = [
         "bifrost",
-        "BIFROST_020_19700101",
-        CURRENT_VERSION,
+        f"BIFROST_{version_token}_19700101",
+        version,
         "iso",
-        "bios.syslinux uefi.systemd-boot",
+        "uefi.systemd-boot",
         "0:0:755",
         "0:0:755",
+        "0:0:644",
     ]
     if default != expected_default:
         raise ValidationError(f"unexpected default profile identity: {default!r}")
-    override = profile_values(root, "9.8.7-test.1", 86_400)
-    if override[:3] != ["bifrost", "BIFROST_020_19700102", CURRENT_VERSION]:
+    override = profile_values(root, 86_400)
+    if override[:3] != ["bifrost", f"BIFROST_{version_token}_19700102", version]:
         raise ValidationError(f"SOURCE_DATE_EPOCH override is not deterministic: {override[:3]!r}")
+    profile_source = (root / "profile/profiledef.sh").read_text(encoding="utf-8")
+    if "/VERSION" not in profile_source or re.search("bifrost_version=[\"'][0-9]", profile_source):
+        raise ValidationError("profiledef.sh must consume canonical VERSION without a hardcoded fallback")
+
     os_release = read_os_release(root / "profile/airootfs/usr/share/bifrost/os-release")
     for key in ("BUILD_ID", "VERSION_ID", "IMAGE_VERSION"):
-        if os_release.get(key) != CURRENT_VERSION:
-            raise ValidationError(f"os-release {key} must be {CURRENT_VERSION}")
-    if CURRENT_VERSION not in os_release.get("PRETTY_NAME", "") or CURRENT_VERSION not in os_release.get("VERSION", ""):
-        raise ValidationError("os-release display metadata does not contain the release version")
+        if os_release.get(key) != version:
+            raise ValidationError(f"os-release {key} must be {version}")
+    if version not in os_release.get("PRETTY_NAME", "") or version not in os_release.get("VERSION", ""):
+        raise ValidationError("os-release display metadata does not contain the canonical version")
 
     live_packages = read_package_names(root / "profile/packages.x86_64")
     required_live = {"archinstall", "cosmic", "gtk4", "linux", "linux-firmware", "networkmanager", "python-gobject"}
@@ -247,6 +263,88 @@ def validate_profile(root: Path) -> None:
     bootstrap = read_package_names(root / "profile/bootstrap_packages")
     if not {"arch-install-scripts", "base"}.issubset(bootstrap):
         raise ValidationError("bootstrap package list must include arch-install-scripts and base")
+
+
+def validate_release_contract(root: Path) -> None:
+    version = read_version(root)
+    release_path = (
+        root
+        / "profile/airootfs/usr/share/bifrost/installed-root/usr/share/bifrost/release.json"
+    )
+    try:
+        with release_path.open(encoding="utf-8") as source:
+            release = json.load(source, object_pairs_hook=unique_json_object)
+    except (OSError, UnicodeError, ValueError) as error:
+        raise ValidationError(f"invalid installed release provenance: {error}") from error
+    if release.get("schema_version") != 1:
+        raise ValidationError("installed release provenance must use schema_version 1")
+    if release.get("provenance_status") != "unsigned-development":
+        raise ValidationError("source release provenance must be explicitly unsigned-development")
+    if release.get("version") != version:
+        raise ValidationError("installed release provenance version must equal canonical VERSION")
+    if release.get("source_revision") is not None or release.get("build_id") is not None:
+        raise ValidationError("source release template must not claim a finalized revision/build identity")
+    if release.get("source_date_epoch") != 0:
+        raise ValidationError("source release template must use deterministic epoch zero")
+    iso = release.get("iso")
+    if not isinstance(iso, dict) or iso.get("file") != f"bifrost-{version}-x86_64.iso":
+        raise ValidationError("source release template has an inconsistent ISO identity")
+    for key in ("bytes", "sha256", "volume_id"):
+        if iso.get(key) is not None:
+            raise ValidationError(f"source release template ISO {key} must remain unfinalized")
+    evidence = release.get("evidence")
+    required_evidence = {
+        "attestation_file",
+        "build_metadata_file",
+        "checksum_file",
+        "checksum_signature_file",
+        "detached_signature_file",
+        "package_manifest_file",
+        "signer_fingerprint",
+        "toolchain_manifest_file",
+    }
+    if not isinstance(evidence, dict) or not required_evidence.issubset(evidence):
+        raise ValidationError("source release template is missing evidence identity fields")
+    if any(evidence[key] is not None for key in required_evidence):
+        raise ValidationError("source release template must not claim finalized evidence")
+
+    generator = (root / "generate-release-metadata.py").read_text(encoding="utf-8")
+    publisher = (root / "publish-release.py").read_text(encoding="utf-8")
+    workflow = (root / ".github/workflows/publish-final-release.yml").read_text(encoding="utf-8")
+    if "--force" in generator:
+        raise ValidationError("release evidence generation must never expose a replacement override")
+    for source_name, source in (("metadata generator", generator), ("publisher", publisher)):
+        if "VERSION_FILE" not in source or '"0.2.0"' in source or "'0.2.0'" in source:
+            raise ValidationError(f"{source_name} must consume VERSION without an old hardcoded fallback")
+    required_generator_contract = (
+        "--final",
+        "--prepare-installed",
+        "--source-tag",
+        "--toolchain-manifest",
+        "checksum_signature_file",
+        "detached_signature_file",
+        "profile_sha256",
+    )
+    if any(token not in generator for token in required_generator_contract):
+        raise ValidationError("release metadata generator is missing final provenance/signing controls")
+    forbidden_publication = ("release delete", "git tag -f", "--force", "--clobber")
+    if any(token in publisher for token in forbidden_publication):
+        raise ValidationError("release publisher contains a destructive replacement path")
+    required_publication = (
+        "verify_remote_tag",
+        "require_no_release",
+        "verify_signature",
+        "provenance_status",
+        "toolchain_manifest_sha256",
+        "--signer-fingerprint",
+        "VALIDSIG",
+    )
+    if any(token not in publisher for token in required_publication):
+        raise ValidationError("release publisher is missing fail-closed identity/evidence checks")
+    if "workflow_dispatch:" not in workflow or "contents: write" not in workflow:
+        raise ValidationError("final release workflow must be operator-dispatched with explicit write permission")
+    if '--signer-fingerprint "${{ inputs.signer_fingerprint }}"' not in workflow:
+        raise ValidationError("final release workflow must pass the operator-trusted signer fingerprint")
 
 
 def main() -> int:
@@ -259,6 +357,7 @@ def main() -> int:
         validate_sources(root)
         validate_tracked_files(root)
         validate_profile(root)
+        validate_release_contract(root)
     except (OSError, ValidationError) as error:
         print(f"validate-build.py: {error}", file=sys.stderr)
         return 1

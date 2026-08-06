@@ -14,7 +14,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk
 
 sys.path.insert(0, "/usr/lib/bifrost-apps")
-from manager import manager_from_environment  # noqa: E402
+from manager import UpdateError, manager_from_environment  # noqa: E402
 
 
 TEXT = {
@@ -27,15 +27,20 @@ TEXT = {
         "installed": "Uppsett",
         "update": "Uppfærsla tiltæk",
         "install": "Setja upp",
+        "withdrawn": "Ekki lengur gefið út",
         "update_action": "Uppfæra",
         "rollback": "Fara til baka",
+        "remove": "Fjarlægja",
         "empty": "Engin BifrOSt forrit hafa verið gefin út enn.",
         "loading": "Sæki undirritaðar upplýsingar…",
         "working": "Vinn að breytingu…",
         "done": "Aðgerð tókst.",
+        "partial": "{completed} uppfærslur tókust; {failed} mistókust.",
         "error": "Aðgerð mistókst",
+        "unexpected": "Óvænt innri villa kom upp.",
         "versions": "Uppsett: {installed} · Tiltækt: {available}",
         "not_installed": "ekki uppsett",
+        "unpublished": "ekki lengur gefið út",
         "security": "Forrit koma aðeins úr undirritaðri BifrOSt Flatpak-geymslu. Kerfisuppfærslur Arch Linux eru ekki framkvæmdar hér.",
     },
     "en": {
@@ -47,15 +52,20 @@ TEXT = {
         "installed": "Installed",
         "update": "Update available",
         "install": "Install",
+        "withdrawn": "Withdrawn",
         "update_action": "Update",
         "rollback": "Roll back",
+        "remove": "Remove",
         "empty": "No BifrOSt applications have been published yet.",
         "loading": "Fetching signed repository metadata…",
         "working": "Applying change…",
         "done": "Operation completed.",
+        "partial": "{completed} update(s) completed; {failed} failed.",
         "error": "Operation failed",
+        "unexpected": "An unexpected internal error occurred.",
         "versions": "Installed: {installed} · Available: {available}",
         "not_installed": "not installed",
+        "unpublished": "unpublished",
         "security": "Applications come only from the signed BifrOSt Flatpak repository. This assistant does not perform Arch Linux system upgrades.",
     },
 }
@@ -193,10 +203,12 @@ class UpdateAssistant(Adw.Application):
             "available": text["available"],
             "installed": text["installed"],
             "update": text["update"],
+            "withdrawn": text["withdrawn"],
         }
         for record in self.records:
             installed = record.installed_version or text["not_installed"]
-            versions = text["versions"].format(installed=installed, available=record.available_version)
+            available = record.available_version or text["unpublished"]
+            versions = text["versions"].format(installed=installed, available=available)
             subtitle = f"{status_labels[record.status]} · {versions}"
             if record.description:
                 subtitle = f"{record.description}\n{subtitle}"
@@ -208,6 +220,8 @@ class UpdateAssistant(Adw.Application):
             elif record.status == "update":
                 action.set_label(text["update_action"])
                 action.add_css_class("suggested-action")
+            elif record.status == "withdrawn":
+                action.set_label(text["remove"])
             else:
                 action.set_visible(False)
             action.connect("clicked", self.on_action, record.app_id, record.status)
@@ -221,7 +235,7 @@ class UpdateAssistant(Adw.Application):
             self.list_box.append(row)
         self.update_all_button.set_sensitive(not self.busy and any(record.status == "update" for record in self.records))
 
-    def refresh(self) -> None:
+    def refresh(self, completion_message: str = "") -> None:
         if self.busy:
             return
         self.set_busy(True, TEXT[self.language]["loading"])
@@ -229,20 +243,22 @@ class UpdateAssistant(Adw.Application):
         def work():
             try:
                 records = self.manager.catalog()
-            except Exception as error:
-                GLib.idle_add(self.finish_refresh, None, str(error))
+            except UpdateError as error:
+                GLib.idle_add(self.finish_refresh, None, str(error), "")
+            except Exception:
+                GLib.idle_add(self.finish_refresh, None, TEXT[self.language]["unexpected"], "")
             else:
-                GLib.idle_add(self.finish_refresh, records, None)
+                GLib.idle_add(self.finish_refresh, records, None, completion_message)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def finish_refresh(self, records, error):
+    def finish_refresh(self, records, error, completion_message):
         if error:
             self.records = []
             self.set_busy(False, f"{TEXT[self.language]['error']}: {error}")
         else:
             self.records = records
-            self.set_busy(False, "")
+            self.set_busy(False, completion_message)
         self.render()
         return GLib.SOURCE_REMOVE
 
@@ -254,21 +270,29 @@ class UpdateAssistant(Adw.Application):
 
         def work():
             try:
-                callback()
-            except Exception as error:
-                GLib.idle_add(self.finish_operation, str(error))
+                result = callback()
+            except UpdateError as error:
+                GLib.idle_add(self.finish_operation, str(error), None)
+            except Exception:
+                GLib.idle_add(self.finish_operation, TEXT[self.language]["unexpected"], None)
             else:
-                GLib.idle_add(self.finish_operation, None)
-
+                GLib.idle_add(self.finish_operation, None, result)
         threading.Thread(target=work, daemon=True).start()
 
-    def finish_operation(self, error):
+    def finish_operation(self, error, result):
         if error:
             self.set_busy(False, f"{TEXT[self.language]['error']}: {error}")
             self.render()
         else:
-            self.set_busy(False, TEXT[self.language]["done"])
-            self.refresh()
+            results = result if isinstance(result, list) else []
+            failed = sum(getattr(item, "status", None) == "failed" for item in results)
+            completed = sum(getattr(item, "status", None) == "completed" for item in results)
+            if failed:
+                message = TEXT[self.language]["partial"].format(completed=completed, failed=failed)
+            else:
+                message = TEXT[self.language]["done"]
+            self.set_busy(False, "")
+            self.refresh(message)
         return GLib.SOURCE_REMOVE
 
     def on_action(self, _button, app_id: str, status: str) -> None:
@@ -276,6 +300,8 @@ class UpdateAssistant(Adw.Application):
             self.run_operation(lambda: self.manager.install(app_id))
         elif status == "update":
             self.run_operation(lambda: self.manager.update(app_id))
+        elif status == "withdrawn":
+            self.run_operation(lambda: self.manager.remove(app_id))
 
     def on_rollback(self, _button, app_id: str) -> None:
         self.run_operation(lambda: self.manager.rollback(app_id))

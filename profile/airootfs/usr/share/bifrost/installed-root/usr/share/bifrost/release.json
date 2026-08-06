@@ -1,0 +1,25 @@
+{
+  "build_id": null,
+  "evidence": {
+    "attestation_file": null,
+    "build_metadata_file": null,
+    "checksum_file": null,
+    "checksum_signature_file": null,
+    "detached_signature_file": null,
+    "package_manifest_file": null,
+    "signer_fingerprint": null,
+    "toolchain_manifest_file": null
+  },
+  "iso": {
+    "bytes": null,
+    "file": "bifrost-0.2.1-x86_64.iso",
+    "sha256": null,
+    "volume_id": null
+  },
+  "profile_sha256": null,
+  "provenance_status": "unsigned-development",
+  "schema_version": 1,
+  "source_date_epoch": 0,
+  "source_revision": null,
+  "version": "0.2.1"
+}

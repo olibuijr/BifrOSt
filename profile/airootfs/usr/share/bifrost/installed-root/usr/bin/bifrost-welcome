@@ -9,7 +9,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, Gtk
+from gi.repository import Adw, Gio, GLib, Gtk
 
 MARKER = Path.home() / ".config/bifrost/welcome-dismissed"
 STATE = Path("/etc/bifrost/install-state.json")
@@ -22,9 +22,13 @@ TEXT = {
         "title": "Velkomin í BifrOSt",
         "subtitle": "Kerfið er tilbúið. Hér eru mikilvægustu upplýsingarnar fyrir fyrstu skrefin.",
         "updates": "Uppfærslur",
-        "updates_body": "Opnaðu „BifrOSt uppfærsluaðstoð“ til að setja upp og uppfæra undirrituð BifrOSt forrit fyrir notandann þinn. Aðstoðin breytir ekki Arch Linux kerfinu. Fyrir kerfið sjálft skaltu keyra heila „sudo pacman -Syu“ færslu; ekki gera hlutauppfærslur.",
+        "updates_body": "Opnaðu Viðhald BifrOSt til að yfirfara Arch-fréttir, heilar kerfisuppfærslur, undirritaða BifrOSt pakkann, forrit, fastbúnað og heilsu. Uppfærslur eru aldrei settar upp sjálfkrafa og kerfisleg afturköllun er ekki lofuð.",
+        "open_maintenance": "Opna Viðhald BifrOSt",
+        "open_maintenance_tip": "Opna stöðu og örugga yfirferð viðhalds",
         "recovery": "Endurheimt og atvikaskrár",
-        "recovery_body": "Keyrðu „bifrost-recovery-info“ til að skoða kerfið án breytinga. Uppsetningarskrár eru í /var/log/bifrost-installer/ og kerfisskrár má skoða með „journalctl -b“. Þetta eru greiningar- og endurheimtarupplýsingar, ekki loforð um sjálfvirka afturköllun.",
+        "recovery_body": "Skoðaðu kerfis- og endurheimtarupplýsingar án breytinga. Uppsetningarskrár eru í /var/log/bifrost-installer/ og kerfisskrár má skoða með „journalctl -b“. Þetta eru greiningarupplýsingar, ekki loforð um sjálfvirka afturköllun.",
+        "open_recovery": "Opna endurheimtarupplýsingar",
+        "open_recovery_tip": "Opna endurheimtarupplýsingar án breytinga",
         "encryption": "Dulkóðun disks",
         "encryption_on": "Virk samkvæmt uppsetningarskrá.",
         "encryption_off": "Ekki virk samkvæmt uppsetningarskrá.",
@@ -35,16 +39,22 @@ TEXT = {
         "dev-containers": "Gámaþróun",
         "dev-web": "Vefþróun",
         "dev-python": "Python þróun",
-        "done": "Loka",
-        "done_tip": "Loka kynningunni; hún opnast ekki sjálfkrafa aftur.",
+        "later": "Seinna",
+        "later_tip": "Loka núna og sýna kynninguna aftur við næstu innskráningu.",
+        "done": "Ekki sýna aftur",
+        "done_tip": "Loka kynningunni og ekki opna hana sjálfkrafa aftur.",
     },
     "en": {
         "title": "Welcome to BifrOSt",
         "subtitle": "Your system is ready. These are the essentials for getting started.",
         "updates": "Updates",
-        "updates_body": "Open “BifrOSt Update Assistant” to install and update signed BifrOSt applications for your user. The assistant does not modify the Arch Linux system. For the operating system itself, run the complete “sudo pacman -Syu” transaction; do not perform partial upgrades.",
+        "updates_body": "Open BifrOSt Maintenance to review Arch news, complete system upgrades, the signed BifrOSt payload, apps, firmware, and health. Updates are never installed automatically, and no system rollback is promised.",
+        "open_maintenance": "Open BifrOSt Maintenance",
+        "open_maintenance_tip": "Open status and the safe maintenance review",
         "recovery": "Recovery and logs",
-        "recovery_body": "Run “bifrost-recovery-info” for read-only system discovery. Installer logs are in /var/log/bifrost-installer/ and system logs can be viewed with “journalctl -b”. These are diagnostic and recovery resources, not a promise of automatic rollback.",
+        "recovery_body": "View system and recovery information without making changes. Installer logs are in /var/log/bifrost-installer/ and system logs can be viewed with “journalctl -b”. These are diagnostic resources, not a promise of automatic rollback.",
+        "open_recovery": "Open Recovery Information",
+        "open_recovery_tip": "Open read-only recovery information",
         "encryption": "Disk encryption",
         "encryption_on": "Enabled according to the installation record.",
         "encryption_off": "Not enabled according to the installation record.",
@@ -55,8 +65,10 @@ TEXT = {
         "dev-containers": "Container development",
         "dev-web": "Web development",
         "dev-python": "Python development",
-        "done": "Close",
-        "done_tip": "Close the welcome; it will not open automatically again.",
+        "later": "Later",
+        "later_tip": "Close now and show the welcome again at the next login.",
+        "done": "Do not show again",
+        "done_tip": "Close the welcome and do not open it automatically again.",
     },
 }
 PROFILE_IDS = {"base", "dev-rust", "dev-containers", "dev-web", "dev-python"}
@@ -72,7 +84,7 @@ def load_state():
     return value
 
 
-def section(title, body):
+def section(title, body, actions=()):
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     box.add_css_class("card")
     box.set_margin_top(6)
@@ -87,6 +99,11 @@ def section(title, body):
     label.set_selectable(True)
     box.append(heading)
     box.append(label)
+    for action_label, tooltip, callback in actions:
+        button = Gtk.Button(label=action_label, halign=Gtk.Align.START)
+        button.set_tooltip_text(tooltip)
+        button.connect("clicked", callback)
+        box.append(button)
     return box
 
 
@@ -97,6 +114,7 @@ class Welcome(Adw.Application):
         self.language = "is" if (locale.getlocale()[0] or "").lower().startswith("is") else "en"
         self.state = load_state()
         self.shown = False
+        self.dismissed = False
 
     def do_activate(self):
         if MARKER.exists() and not FORCE:
@@ -162,25 +180,50 @@ class Welcome(Adw.Application):
         subtitle.set_wrap(True)
         self.page.append(title)
         self.page.append(subtitle)
-        self.page.append(section(t["updates"], t["updates_body"]))
-        self.page.append(section(t["recovery"], t["recovery_body"]))
+        self.page.append(section(
+            t["updates"],
+            t["updates_body"],
+            ((t["open_maintenance"], t["open_maintenance_tip"], lambda _button: self.launch("org.bifrost.Maintenance.desktop")),),
+        ))
+        self.page.append(section(
+            t["recovery"],
+            t["recovery_body"],
+            ((t["open_recovery"], t["open_recovery_tip"], lambda _button: self.launch("org.bifrost.RecoveryInfo.desktop")),),
+        ))
         self.page.append(section(t["encryption"], self.state_text("encryption")))
         self.page.append(section(t["profiles"], self.state_text("profiles")))
-        dismiss = Gtk.Button(label=t["done"], halign=Gtk.Align.END)
+        actions = Gtk.Box(spacing=6, halign=Gtk.Align.END)
+        later = Gtk.Button(label=t["later"])
+        later.set_tooltip_text(t["later_tip"])
+        later.connect("clicked", lambda _button: self.window.close())
+        dismiss = Gtk.Button(label=t["done"])
         dismiss.add_css_class("suggested-action")
         dismiss.set_tooltip_text(t["done_tip"])
-        dismiss.connect("clicked", lambda _button: self.window.close())
-        dismiss.set_receives_default(True)
-        self.window.set_default_widget(dismiss)
-        self.page.append(dismiss)
+        dismiss.connect("clicked", self.dismiss)
+        actions.append(later)
+        actions.append(dismiss)
+        self.window.set_default_widget(later)
+        self.page.append(actions)
 
     def change_language(self, button, language):
         if button.get_active() and self.language != language:
             self.language = language
             self.render()
 
+    def launch(self, desktop_id):
+        application = Gio.DesktopAppInfo.new(desktop_id)
+        if application is not None:
+            try:
+                application.launch([], None)
+            except GLib.Error:
+                pass
+
+    def dismiss(self, _button):
+        self.dismissed = True
+        self.window.close()
+
     def on_close(self, _window):
-        if self.shown:
+        if self.shown and self.dismissed:
             try:
                 MARKER.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 temporary = MARKER.with_suffix(".tmp")

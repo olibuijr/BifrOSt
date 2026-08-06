@@ -127,15 +127,27 @@ def valid_terminal_event(event):
     if not isinstance(event, dict) or event.get("schema_version") != 2:
         return False
     kind = event.get("event")
+    live_log = event.get("live_log_dir")
+    target_log = event.get("target_log_dir")
+    log_dir = event.get("log_dir")
+    if not isinstance(live_log, str) or not live_log or not isinstance(log_dir, str) or not log_dir:
+        return False
     if kind == "success":
         return (event.get("wiped") is True
                 and isinstance(event.get("message"), str) and bool(event["message"])
-                and isinstance(event.get("log_dir"), str) and bool(event["log_dir"]))
+                and isinstance(target_log, str) and bool(target_log)
+                and log_dir == target_log)
     return (kind in ("error", "failure")
             and isinstance(event.get("code"), str) and bool(event["code"])
             and isinstance(event.get("message"), str) and bool(event["message"])
-            and isinstance(event.get("wiped"), bool))
+            and isinstance(event.get("wiped"), bool)
+            and target_log is None and log_dir == live_log)
 
+
+def terminal_log_dir(event):
+    if not isinstance(event, dict):
+        return None
+    return event.get("target_log_dir") or event.get("live_log_dir") or event.get("log_dir")
 
 def failure_recovery_key(event):
     if not valid_terminal_event(event) or event.get("event") not in ("error", "failure"):
@@ -155,7 +167,9 @@ ERROR_CODE_CATEGORIES = {
     "target_changed": "target", "offline_source_unavailable": "source",
     "offline_source_unverified": "source", "offline_source_incomplete": "source",
     "online_source_unavailable": "source", "online_source_incomplete": "source",
+    "package_source_unverified": "source",
     "archinstall_config_invalid": "plan", "archinstall_failed": "install",
+    "package_trust_failed": "install", "package_install_failed": "install",
     "installed_assets_missing": "verify", "branding_missing": "verify",
     "branding_invalid": "verify", "target_not_mounted": "verify",
     "target_incomplete": "verify", "bootloader_missing": "verify",
@@ -163,7 +177,9 @@ ERROR_CODE_CATEGORIES = {
     "boot_entry_missing": "verify", "boot_entry_invalid": "verify",
     "encryption_initramfs_invalid": "verify", "encryption_boot_invalid": "verify",
     "encryption_layout_invalid": "verify", "filesystem_layout_invalid": "verify",
-    "ui_backend_start": "backend",
+    "locale_state_invalid": "verify", "evidence_persistence_failed": "verify",
+    "repository_config_missing": "verify", "repository_config_invalid": "verify",
+    "package_ownership_invalid": "verify", "ui_backend_start": "backend",
 }
 
 
@@ -173,11 +189,14 @@ def error_category(code):
 
 
 def validate_identity(username, hostname, user_password, confirmation,
-                      encryption=False, encryption_password="", encryption_confirmation=""):
+                      encryption=False, encryption_password="", encryption_confirmation="",
+                      full_name=""):
     if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", username):
         return "username"
-    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9.-]{0,62}", hostname):
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,61}[A-Za-z0-9])?", hostname):
         return "hostname"
+    if len(full_name) > 64 or any(character in full_name for character in ":\0\n\r"):
+        return "full_name"
     if len(user_password) < 8:
         return "password_short"
     if user_password != confirmation:
@@ -271,14 +290,28 @@ def _self_check():
     assert KEYBOARD_LAYOUT == "is-latin1"
     assert failure_recovery_key(None) == "recovery_unknown"
     assert failure_recovery_key({"schema_version": 2, "event": "error"}) == "recovery_unknown"
-    assert failure_recovery_key(
-        {"schema_version": 2, "event": "error", "code": "target_refused",
-         "message": "refused", "wiped": "false"}) == "recovery_unknown"
-    assert failure_recovery_key(
-        {"schema_version": 2, "event": "error", "code": "target_refused",
-         "message": "refused", "wiped": False}) == "recovery_safe"
+    failure = {
+        "schema_version": 2, "event": "error", "code": "target_refused",
+        "message": "refused", "wiped": False,
+        "log_dir": "/var/log/bifrost-installer/run",
+        "live_log_dir": "/var/log/bifrost-installer/run", "target_log_dir": None,
+    }
+    assert failure_recovery_key(failure) == "recovery_safe"
+    assert terminal_log_dir(failure) == failure["live_log_dir"]
+    success = {
+        "schema_version": 2, "event": "success", "message": "done", "wiped": True,
+        "log_dir": "/var/log/bifrost-installer/run",
+        "live_log_dir": "/var/log/bifrost-installer/live",
+        "target_log_dir": "/var/log/bifrost-installer/run",
+    }
+    assert valid_terminal_event(success)
+    assert terminal_log_dir(success) == success["target_log_dir"]
+    assert not valid_terminal_event({**success, "target_log_dir": None})
     assert validate_identity("user", "bifrost", "password", "password") is None
     assert validate_identity("Bad User", "bifrost", "password", "password") == "username"
+    assert validate_identity("user", "bifrost-", "password", "password") == "hostname"
+    assert validate_identity("user", "bifrost", "password", "password",
+                             full_name="invalid:name") == "full_name"
     print("installer self-check passed")
 
 
@@ -343,13 +376,13 @@ STRINGS = {
         "typed_path": "Slóð disks", "cancel": "Hætta við", "erase_install": "Eyða disknum og setja upp",
         "preflight": "Endurstaðfesti disk og pakkagjafa…", "target_changed": "Diskurinn er ekki lengur sá sami eða er ekki lengur öruggur. Veldu hann aftur.",
         "source_changed": "Valinn pakkagjafi er ekki tilbúinn. Athugaðu tengingu eða staðbundinn miðil.",
-        "username_error": "Notandanafn má aðeins innihalda lágstafi, tölur, _ og -.", "hostname_error": "Ógilt tölvuheiti.",
+        "username_error": "Notandanafn má aðeins innihalda lágstafi, tölur, _ og -.", "hostname_error": "Ógilt tölvuheiti.", "full_name_error": "Nafn má ekki innihalda tvípunkt eða línuskil og má vera mest 64 stafir.",
         "password_short": "Lykilorð þarf að vera að minnsta kosti 8 stafir.", "password_mismatch": "Lykilorðin passa ekki saman.",
         "encryption_short": "Dulkóðunarlykilorð þarf að vera að minnsta kosti 8 stafir.", "encryption_mismatch": "Dulkóðunarlykilorðin passa ekki saman.",
         "source_required": "Valinn pakkagjafi er ekki tilbúinn.", "disk_required": "Veldu hæfan disk.",
         "progress_title": "Set BifrOSt upp", "progress_copy": "Bakendinn sannreynir auðkenni disks og pakkagjafa áður en nokkru er eytt.",
         "progress_start": "Undirbý uppsetningu…", "phase_preflight": "Sannreyni disk og öryggisskilyrði…", "phase_source": "Sannreyni pakkagjafa…", "phase_plan": "Útbý örugga diskskipan…",
-        "phase_apply": "Set upp Arch grunnkerfið…", "phase_postinstall": "Set upp BifrOSt upplifun…", "phase_verify": "Sannreyni uppsett kerfi…",
+        "phase_apply": "Set upp Arch grunnkerfið…", "phase_postinstall": "Set upp BifrOSt upplifun…", "phase_verify": "Sannreyni uppsett kerfi…", "phase_evidence": "Vista hreinsaða uppsetningarskrá varanlega…",
         "success": "Uppsetningu lokið", "success_detail": "BifrOSt er tilbúið. Fjarlægðu uppsetningarmiðilinn og endurræstu tölvuna.",
         "failure": "Uppsetning mistókst",
         "failure_detail": "{summary}\nVillukóði: {code}\nTæknilegar upplýsingar (óþýddar): {message}",
@@ -398,13 +431,13 @@ STRINGS = {
         "confirm_body": "This permanently erases all partitions and data on:\n\n{disk}\n\nType the exact disk path to confirm: {path}",
         "typed_path": "Disk path", "cancel": "Cancel", "erase_install": "Erase disk and install", "preflight": "Rechecking disk and package source…",
         "target_changed": "The disk is no longer the same device or is no longer safe. Select it again.", "source_changed": "The selected package source is not ready. Check the connection or local media.",
-        "username_error": "Username may contain only lowercase letters, numbers, _ and -.", "hostname_error": "Invalid computer name.",
+        "username_error": "Username may contain only lowercase letters, numbers, _ and -.", "hostname_error": "Invalid computer name.", "full_name_error": "Full name must be at most 64 characters and cannot contain a colon or line break.",
         "password_short": "Password must be at least 8 characters.", "password_mismatch": "Passwords do not match.",
         "encryption_short": "Encryption passphrase must be at least 8 characters.", "encryption_mismatch": "Encryption passphrases do not match.",
         "source_required": "The selected package source is not ready.", "disk_required": "Select an eligible disk.",
         "progress_title": "Installing BifrOSt", "progress_copy": "The backend verifies disk identity and package sources before anything is erased.", "progress_start": "Preparing installation…",
         "phase_preflight": "Verifying disk and safety conditions…", "phase_source": "Verifying package sources…", "phase_plan": "Building a safe disk plan…", "phase_apply": "Installing the Arch base system…",
-        "phase_postinstall": "Installing the BifrOSt experience…", "phase_verify": "Verifying the installed system…", "success": "Installation complete",
+        "phase_postinstall": "Installing the BifrOSt experience…", "phase_verify": "Verifying the installed system…", "phase_evidence": "Persisting sanitized installation evidence…", "success": "Installation complete",
         "success_detail": "BifrOSt is ready. Remove the installation media and restart the computer.",
         "failure": "Installation failed",
         "failure_detail": "{summary}\nError code: {code}\nTechnical details: {message}",
@@ -910,10 +943,11 @@ class InstallerWindow(Adw.ApplicationWindow):
             self.username.get_text().strip(), self.hostname.get_text().strip(),
             self.user_password.get_text(), self.user_password2.get_text(),
             self.encrypt.get_active(), self.encryption_password.get_text(),
-            self.encryption_password2.get_text(),
+            self.encryption_password2.get_text(), self.fullname.get_text().strip(),
         )
         if error:
-            key = {"username": "username_error", "hostname": "hostname_error"}.get(error, error)
+            key = {"username": "username_error", "hostname": "hostname_error",
+                   "full_name": "full_name_error"}.get(error, error)
             self._toast(self.t(key))
             return False
         return True
@@ -1123,15 +1157,18 @@ class InstallerWindow(Adw.ApplicationWindow):
                 GLib.idle_add(self._install_done, terminal)
             else:
                 failure = terminal or {
-                    "event": "error", "code": f"backend_exit_{returncode}",
+                    "schema_version": 2, "event": "error", "code": f"backend_exit_{returncode}",
                     "message": diagnostics[-1] if diagnostics else STRINGS["en"]["backend_protocol"],
-                    "log_dir": "/var/log/bifrost-installer",
+                    "wiped": False, "log_dir": "/var/log/bifrost-installer",
+                    "live_log_dir": "/var/log/bifrost-installer", "target_log_dir": None,
                 }
                 GLib.idle_add(self._install_failed, failure)
         except Exception as exc:
             GLib.idle_add(self._install_failed, {
-                "event": "error", "code": "ui_backend_start", "message": str(exc),
+                "schema_version": 2, "event": "error", "code": "ui_backend_start",
+                "message": str(exc), "wiped": False,
                 "log_dir": "/var/log/bifrost-installer",
+                "live_log_dir": "/var/log/bifrost-installer", "target_log_dir": None,
             })
 
     def _backend_event(self, event):
@@ -1139,7 +1176,7 @@ class InstallerWindow(Adw.ApplicationWindow):
             return
         phase = event.get("phase")
         fractions = {"preflight": 0.06, "source": 0.12, "plan": 0.2,
-                     "apply": 0.42, "postinstall": 0.78, "verify": 0.92}
+                     "apply": 0.42, "postinstall": 0.74, "verify": 0.9, "evidence": 0.97}
         if phase in fractions:
             self.progress.set_fraction(fractions[phase])
             self.progress.set_text(self.t(f"phase_{phase}"))
@@ -1152,7 +1189,7 @@ class InstallerWindow(Adw.ApplicationWindow):
         self.progress.set_text(self.t("success"))
         self.status.set_text(self.t("success_detail"))
         self.status.add_css_class("success")
-        log_dir = event.get("log_dir")
+        log_dir = terminal_log_dir(event)
         if log_dir:
             self.log_state.set_text(self.t("log_path", path=log_dir))
 
@@ -1168,7 +1205,7 @@ class InstallerWindow(Adw.ApplicationWindow):
         self.status.set_text(self.t(
             "failure_detail", summary=summary, code=code, message=message))
         self.status.add_css_class("failure")
-        log_dir = str(event.get("log_dir") or "/var/log/bifrost-installer")
+        log_dir = terminal_log_dir(event) or "/var/log/bifrost-installer"
         self.log_state.set_text(self.t("log_path", path=log_dir))
         self.recovery_state.set_text(self.t(failure_recovery_key(event)))
         self.retry_button.set_visible(True)
