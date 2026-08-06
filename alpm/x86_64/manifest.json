@@ -1,0 +1,61 @@
+{
+  "architecture": "any",
+  "files": {
+    "alpm-repository-key.asc": {
+      "sha256": "d8225a83713198d6d825395fc69a749f258acc3cc7372f3854e6654fe5314b7a",
+      "size": 441
+    },
+    "alpm-repository-key.fingerprint": {
+      "sha256": "c667dde495ab0933073fc028a450a70652a453a89d79063bb450c66822c11fe1",
+      "size": 41
+    },
+    "alpm-repository-key.gpg": {
+      "sha256": "643d129e8342f6e500c4627ecb51c1872eb2924ccc86ed559899951ed4923c72",
+      "size": 266
+    },
+    "bifrost-system-0.2.1-1-any.pkg.tar.zst": {
+      "sha256": "b0d1a46b573f77374c81862c55ed849319f2fdd0a606b61d8aba55ad421f6b72",
+      "size": 41808
+    },
+    "bifrost-system-0.2.1-1-any.pkg.tar.zst.sig": {
+      "sha256": "e8e96d2adf7e0307553057c1ed2f2ecbe46d25ce73149355eead4936fe067068",
+      "size": 119
+    },
+    "bifrost.db": {
+      "sha256": "5789afc57e93b0bf621fb3857a1d4bee1fcdc5b3c8112f75de4822077de2b670",
+      "size": 514
+    },
+    "bifrost.db.sig": {
+      "sha256": "acbeafbad6add9063cf56d471b71cc87a454427b2dfb14e28837f70142e5f1a8",
+      "size": 119
+    },
+    "bifrost.db.tar.gz": {
+      "sha256": "5789afc57e93b0bf621fb3857a1d4bee1fcdc5b3c8112f75de4822077de2b670",
+      "size": 514
+    },
+    "bifrost.db.tar.gz.sig": {
+      "sha256": "acbeafbad6add9063cf56d471b71cc87a454427b2dfb14e28837f70142e5f1a8",
+      "size": 119
+    },
+    "bifrost.files": {
+      "sha256": "c0ed7101c099cc7faca82a0cedf70c5ea20a1ec4437894ee3529b5c5c1785712",
+      "size": 987
+    },
+    "bifrost.files.sig": {
+      "sha256": "20c02d77558fe39b670104f30ebe8828a59e49f8631e4a4545d237ca1ff48dd1",
+      "size": 119
+    },
+    "bifrost.files.tar.gz": {
+      "sha256": "c0ed7101c099cc7faca82a0cedf70c5ea20a1ec4437894ee3529b5c5c1785712",
+      "size": 987
+    },
+    "bifrost.files.tar.gz.sig": {
+      "sha256": "20c02d77558fe39b670104f30ebe8828a59e49f8631e4a4545d237ca1ff48dd1",
+      "size": 119
+    }
+  },
+  "repository": "bifrost-system",
+  "schema_version": 1,
+  "signing_fingerprint": "69D95C1EA4E97AB5FB9580AAFED54F3B9691E1C2",
+  "version": "0.2.1"
+}
