@@ -1,0 +1,50 @@
+#!/usr/bin/python3
+"""Machine-readable CLI for the BifrOSt maintenance backend."""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import asdict
+import json
+import sys
+
+sys.path.insert(0, "/usr/lib/bifrost-maintenance")
+from manager import MaintenanceError, manager_from_environment  # noqa: E402
+
+
+def _print(value) -> None:
+    if hasattr(value, "as_dict"):
+        value = value.as_dict()
+    else:
+        value = asdict(value)
+    print(json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="bifrost-maintenance-cli")
+    commands = parser.add_subparsers(dest="command", required=True)
+    status = commands.add_parser("status", help="print the complete read-only maintenance status")
+    status.add_argument("--no-flatpak-refresh", action="store_true")
+    acknowledge = commands.add_parser("acknowledge-news", help="persist reviewed Arch news item IDs")
+    acknowledge.add_argument("item_id", nargs="+")
+    upgrade = commands.add_parser("upgrade", help="authorize one complete interactive pacman -Syu")
+    upgrade.add_argument("--ack-news", action="append", default=[], metavar="ITEM_ID")
+    arguments = parser.parse_args()
+    manager = manager_from_environment()
+    try:
+        if arguments.command == "status":
+            print(manager.status_json(refresh_flatpak=not arguments.no_flatpak_refresh), end="")
+        elif arguments.command == "acknowledge-news":
+            _print(manager.acknowledge_news(arguments.item_id))
+        else:
+            result = manager.apply_system_upgrade(arguments.ack_news)
+            _print(result)
+            return 0 if result.completed else 1
+        return 0
+    except MaintenanceError as error:
+        print(json.dumps({"ok": False, "error": error.as_dict()}, sort_keys=True), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

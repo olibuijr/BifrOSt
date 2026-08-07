@@ -14,6 +14,8 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
+import tempfile
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent
@@ -25,6 +27,10 @@ SOURCE_REVISION = re.compile(r"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$")
 RELEASE_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 TAG_NAME = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 PACKAGE_ARCHIVE_SUFFIXES = ("zst", "xz", "gz", "bz2", "lrz", "lzo", "Z")
+ALPM_PUBLIC_KEY = ROOT / "keys" / "bifrost-alpm-key.asc"
+ALPM_PRIMARY_FINGERPRINT = "69d95c1ea4e97ab5fb9580aafed54f3b9691e1c2"
+BIFROST_REPOSITORY_PACKAGES = frozenset({"bifrost-system"})
+ARCHLINUX_KEYRING_RELATIVE = Path("usr/share/pacman/keyrings/archlinux.gpg")
 
 
 class ReleaseError(Exception):
@@ -240,6 +246,91 @@ def find_package_archive(cache_files: list[Path], name: str, version: str, archi
     return matches[0]
 
 
+def parse_pkginfo(text: str, archive_name: str) -> dict[str, list[str]]:
+    fields: dict[str, list[str]] = {}
+    for line in text.splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        key, separator, value = line.partition(" = ")
+        key = key.strip()
+        if not separator or not key:
+            raise ReleaseError(f"package archive {archive_name} contains a malformed .PKGINFO line")
+        fields.setdefault(key, []).append(value.strip())
+    return fields
+
+
+def archive_pkginfo(archive: Path) -> dict[str, list[str]]:
+    try:
+        with tarfile.open(archive, mode="r:*") as contents:
+            for member in contents:
+                name = member.name[2:] if member.name.startswith("./") else member.name
+                if not name.startswith("."):
+                    break
+                if name != ".PKGINFO":
+                    continue
+                if not member.isfile() or member.size > 1024 * 1024:
+                    raise ReleaseError(f"package archive {archive.name} has an unusable .PKGINFO entry")
+                extracted = contents.extractfile(member)
+                if extracted is None:
+                    raise ReleaseError(f"package archive {archive.name} has an unreadable .PKGINFO entry")
+                with extracted:
+                    text = extracted.read().decode("utf-8")
+                return parse_pkginfo(text, archive.name)
+    except (OSError, UnicodeError, tarfile.TarError) as error:
+        raise ReleaseError(f"cannot read package archive {archive.name}: {error}") from error
+    raise ReleaseError(f"package archive {archive.name} contains no leading .PKGINFO entry")
+
+
+def verify_archive_identity(archive: Path, name: str, version: str, architecture: str) -> None:
+    fields = archive_pkginfo(archive)
+    expected = {"pkgname": name, "pkgver": version, "arch": architecture}
+    for key, wanted in expected.items():
+        values = fields.get(key, [])
+        if values != [wanted]:
+            found = ", ".join(values) or "missing"
+            raise ReleaseError(
+                f"package archive {archive.name} .PKGINFO {key} ({found}) does not match "
+                f"installed record value {wanted}"
+            )
+
+
+def build_alpm_keyring(home: Path, alpm_root: Path) -> None:
+    home.chmod(0o700)
+    if not ALPM_PUBLIC_KEY.is_file():
+        raise ReleaseError(f"pinned ALPM public key is missing: {ALPM_PUBLIC_KEY}")
+    key_sources = [ALPM_PUBLIC_KEY]
+    archlinux_keyring = alpm_root / ARCHLINUX_KEYRING_RELATIVE
+    if archlinux_keyring.is_file():
+        key_sources.append(archlinux_keyring)
+    for source in key_sources:
+        completed = gpg_command(["--homedir", str(home), "--import", str(source)])
+        if completed.returncode:
+            detail = completed.stderr.strip() or "gpg import failed"
+            raise ReleaseError(f"cannot import package verification keys from {source}: {detail}")
+    listed = gpg_command(["--homedir", str(home), "--with-colons", "--fingerprint", "--list-keys"])
+    if listed.returncode or ALPM_PRIMARY_FINGERPRINT not in primary_fingerprints(listed.stdout, "pub"):
+        raise ReleaseError(
+            f"pinned ALPM public key {ALPM_PUBLIC_KEY} does not carry the configured "
+            f"primary fingerprint {ALPM_PRIMARY_FINGERPRINT}"
+        )
+
+
+def verify_archive_signature(home: Path, archive: Path, signature: Path, name: str) -> str:
+    if not signature.is_file():
+        raise ReleaseError(f"package archive {archive.name} is missing its detached signature {signature.name}")
+    completed = gpg_command(["--homedir", str(home), "--status-fd=1", "--verify", str(signature), str(archive)])
+    if completed.returncode:
+        detail = completed.stderr.strip() or "gpg rejected the signature"
+        raise ReleaseError(f"invalid package signature {signature.name}: {detail}")
+    _, primary_fingerprint = validsig_fingerprints(completed.stdout, f"package signature {signature.name}")
+    if name in BIFROST_REPOSITORY_PACKAGES and primary_fingerprint != ALPM_PRIMARY_FINGERPRINT:
+        raise ReleaseError(
+            f"package {name} must be signed by the pinned ALPM primary key "
+            f"{ALPM_PRIMARY_FINGERPRINT}, not {primary_fingerprint}"
+        )
+    return primary_fingerprint
+
+
 def package_manifest(alpm_root: Path, package_cache: Path) -> list[dict[str, Any]]:
     database = alpm_root / "var/lib/pacman/local"
     if not database.is_dir():
@@ -249,35 +340,53 @@ def package_manifest(alpm_root: Path, package_cache: Path) -> list[dict[str, Any
     cache_files = sorted(path for path in package_cache.iterdir() if path.is_file())
     packages: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for desc in sorted(database.glob("*/desc")):
-        fields = parse_alpm_desc(desc)
-        name = one(fields, "NAME", desc)
-        if name in seen:
-            raise ReleaseError(f"duplicate installed package record: {name}")
-        seen.add(name)
-        package_version = one(fields, "VERSION", desc)
-        architecture = one(fields, "ARCH", desc)
-        archive = find_package_archive(cache_files, name, package_version, architecture)
-        archive_bytes, archive_sha256 = stable_file_evidence(archive)
-        package: dict[str, Any] = {
-            "name": name,
-            "version": package_version,
-            "architecture": architecture,
-            "package_file": archive.name,
-            "package_bytes": archive_bytes,
-            "package_sha256": archive_sha256,
-            "database_record_sha256": sha256_file(desc),
-        }
-        if fields.get("BASE"):
-            package["base"] = one(fields, "BASE", desc)
-        build_date = optional_integer(fields, "BUILDDATE", desc)
-        if build_date is not None:
-            package["build_date"] = build_date
-        if fields.get("PACKAGER"):
-            package["packager"] = one(fields, "PACKAGER", desc)
-        if fields.get("VALIDATION"):
-            package["validation"] = fields["VALIDATION"]
-        packages.append(package)
+    with tempfile.TemporaryDirectory(prefix="bifrost-alpm-verify-") as verification_home:
+        home = Path(verification_home)
+        build_alpm_keyring(home, alpm_root)
+        for desc in sorted(database.glob("*/desc")):
+            fields = parse_alpm_desc(desc)
+            name = one(fields, "NAME", desc)
+            if name in seen:
+                raise ReleaseError(f"duplicate installed package record: {name}")
+            seen.add(name)
+            package_version = one(fields, "VERSION", desc)
+            architecture = one(fields, "ARCH", desc)
+            archive = find_package_archive(cache_files, name, package_version, architecture)
+            signature = archive.with_name(archive.name + ".sig")
+            initial = archive.stat()
+            signer_primary = verify_archive_signature(home, archive, signature, name)
+            verify_archive_identity(archive, name, package_version, architecture)
+            archive_bytes, archive_sha256 = stable_file_evidence(archive)
+            final = archive.stat()
+            if (initial.st_dev, initial.st_ino, initial.st_size, initial.st_mtime_ns) != (
+                final.st_dev,
+                final.st_ino,
+                final.st_size,
+                final.st_mtime_ns,
+            ):
+                raise ReleaseError(f"file changed while verifying: {archive}")
+            package: dict[str, Any] = {
+                "name": name,
+                "version": package_version,
+                "architecture": architecture,
+                "package_file": archive.name,
+                "package_bytes": archive_bytes,
+                "package_sha256": archive_sha256,
+                "signature_file": signature.name,
+                "signature_sha256": sha256_file(signature),
+                "signature_primary_fingerprint": signer_primary,
+                "database_record_sha256": sha256_file(desc),
+            }
+            if fields.get("BASE"):
+                package["base"] = one(fields, "BASE", desc)
+            build_date = optional_integer(fields, "BUILDDATE", desc)
+            if build_date is not None:
+                package["build_date"] = build_date
+            if fields.get("PACKAGER"):
+                package["packager"] = one(fields, "PACKAGER", desc)
+            if fields.get("VALIDATION"):
+                package["validation"] = fields["VALIDATION"]
+            packages.append(package)
     if not packages:
         raise ReleaseError(f"ALPM local database contains no package records: {database}")
     return sorted(packages, key=lambda package: package["name"])
@@ -372,19 +481,10 @@ def verify_final_source(
     if verified.returncode:
         detail = verified.stderr.strip() or verified.stdout.strip() or "signature verification failed"
         raise ReleaseError(f"git verify-tag --raw {source_tag} failed: {detail}")
-    valid_lines = [
-        line.split()
-        for line in (verified.stdout + "\n" + verified.stderr).splitlines()
-        if line.startswith("[GNUPG:] VALIDSIG ")
-    ]
-    if len(valid_lines) != 1:
-        raise ReleaseError(f"tag {source_tag} did not produce exactly one VALIDSIG record")
-    tag_fingerprints = {
-        field.lower()
-        for field in valid_lines[0][2:]
-        if SOURCE_REVISION.fullmatch(field)
-    }
-    if signer_fingerprint not in tag_fingerprints:
+    _, primary_fingerprint = validsig_fingerprints(
+        verified.stdout + "\n" + verified.stderr, f"tag {source_tag}"
+    )
+    if primary_fingerprint != signer_fingerprint:
         raise ReleaseError(
             f"tag {source_tag} is not rooted in requested signing fingerprint {signer_fingerprint}"
         )
@@ -411,6 +511,49 @@ def gpg_command(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def validsig_fingerprints(status_output: str, subject: str) -> tuple[str, str]:
+    """Parse the single VALIDSIG status record into (signature key, primary key) fingerprints.
+
+    The documented VALIDSIG format is: fingerprint, creation date, creation
+    timestamp, expiry timestamp, version, reserved, pubkey algo, hash algo,
+    signature class, primary-key fingerprint. Only the tenth (last) field names
+    the primary key, so a signing-subkey fingerprint can never satisfy a
+    primary-key requirement.
+    """
+    records = [
+        line.split()[2:]
+        for line in status_output.splitlines()
+        if line.startswith("[GNUPG:] VALIDSIG ")
+    ]
+    if len(records) != 1:
+        raise ReleaseError(f"{subject} did not produce exactly one VALIDSIG record")
+    fields = records[0]
+    if len(fields) != 10:
+        raise ReleaseError(f"{subject} produced a malformed VALIDSIG record")
+    signature_key = fields[0].lower()
+    primary_key = fields[9].lower()
+    if not SOURCE_REVISION.fullmatch(signature_key) or not SOURCE_REVISION.fullmatch(primary_key):
+        raise ReleaseError(f"{subject} produced a malformed VALIDSIG fingerprint")
+    return signature_key, primary_key
+
+
+def primary_fingerprints(colons: str, record: str) -> set[str]:
+    """Collect only fingerprints whose fpr record directly follows a `record` key line."""
+    values: set[str] = set()
+    waiting = False
+    for raw in colons.splitlines():
+        fields = raw.split(":")
+        kind = fields[0]
+        if kind == record:
+            waiting = True
+        elif waiting and kind == "fpr" and len(fields) > 9:
+            values.add(fields[9].lower())
+            waiting = False
+        elif kind in {"pub", "sec", "sub", "ssb"}:
+            waiting = False
+    return values
+
+
 def secret_key_fingerprint(key: str) -> str:
     if not SOURCE_REVISION.fullmatch(key):
         raise ReleaseError("--gpg-key must be a full 40- or 64-hex fingerprint")
@@ -418,10 +561,9 @@ def secret_key_fingerprint(key: str) -> str:
     if completed.returncode:
         detail = completed.stderr.strip() or "secret key not found"
         raise ReleaseError(f"cannot use signing key {key}: {detail}")
-    fingerprints = [line.split(":")[9].lower() for line in completed.stdout.splitlines() if line.startswith("fpr:")]
     expected = key.lower()
-    if expected not in fingerprints:
-        raise ReleaseError(f"gpg did not resolve the requested secret-key fingerprint exactly: {key}")
+    if expected not in primary_fingerprints(completed.stdout, "sec"):
+        raise ReleaseError(f"gpg did not resolve {key} to a primary secret-key fingerprint")
     return expected
 
 

@@ -10,6 +10,11 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
+# Modules are loaded straight from the tracked profile/airootfs staging tree;
+# bytecode caches must never be written back into it (validate-build.py
+# rejects staged __pycache__ debris).
+sys.dont_write_bytecode = True
+
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLED_ROOT = ROOT / "profile/airootfs/usr/share/bifrost/installed-root"
 MANAGER_PATH = INSTALLED_ROOT / "usr/lib/bifrost-maintenance/manager.py"

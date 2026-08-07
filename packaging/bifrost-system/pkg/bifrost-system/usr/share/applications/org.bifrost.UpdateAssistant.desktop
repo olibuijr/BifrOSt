@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=BifrOSt Update Assistant
+Name[is]=BifrOSt uppfærsluaðstoð
+Comment=Install and update signed BifrOSt applications
+Comment[is]=Setja upp og uppfæra undirrituð BifrOSt forrit
+Exec=bifrost-update-assistant
+Icon=bifrost
+Terminal=false
+Categories=System;Utility;
+Keywords=update;applications;flatpak;bifrost;
+Keywords[is]=uppfærsla;forrit;flatpak;bifrost;
+StartupNotify=true
+StartupWMClass=org.bifrost.UpdateAssistant
+X-GNOME-UsesNotifications=true

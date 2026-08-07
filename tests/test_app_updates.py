@@ -9,6 +9,11 @@ import sys
 import tempfile
 import unittest
 
+# Modules are loaded straight from the tracked profile/airootfs staging tree;
+# bytecode caches must never be written back into it (validate-build.py
+# rejects staged __pycache__ debris).
+sys.dont_write_bytecode = True
+
 ROOT = Path(__file__).resolve().parents[1]
 MANAGER_PATH = ROOT / "profile/airootfs/usr/share/bifrost/installed-root/usr/lib/bifrost-apps/manager.py"
 DISPATCH_PATH = ROOT / "dispatch-app-release.py"

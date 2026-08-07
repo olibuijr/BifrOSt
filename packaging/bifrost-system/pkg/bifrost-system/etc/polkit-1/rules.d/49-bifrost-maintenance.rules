@@ -1,0 +1,9 @@
+polkit.addRule(function(action, subject) {
+    if (action.id !== "org.bifrost.maintenance.system-upgrade") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (!subject.local || !subject.active) {
+        return polkit.Result.NO;
+    }
+    return polkit.Result.AUTH_ADMIN;
+});

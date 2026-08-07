@@ -13,6 +13,7 @@ from pathlib import Path
 import select
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -97,6 +98,22 @@ class SerialConsole:
     def close(self) -> None:
         self.socket.close()
         self.log.close()
+
+    def drain(self, timeout: float = 10.0) -> None:
+        """After QEMU exits, read buffered serial bytes through EOF so log tails survive."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            remaining = max(deadline - time.monotonic(), 0.0)
+            ready, _, _ = select.select([self.socket], [], [], min(1.0, remaining))
+            if not ready:
+                continue
+            try:
+                data = self.socket.recv(65536)
+            except OSError:
+                return
+            if not data:
+                return
+            self.log.write(data)
 
     def send(self, value: str) -> None:
         self.socket.sendall(value.encode())
@@ -372,6 +389,8 @@ def run_case(name: str, config: dict[str, object], work_dir: Path, iso: Path, ve
     shutil.copyfile(OVMF_VARS, case_dir / "OVMF_VARS.fd")
     subprocess.run(["qemu-img", "create", "-f", "qcow2", str(case_dir / "disk.qcow2"), DISK_SIZE], check=True)
 
+    install_started_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    install_started_monotonic = time.monotonic()
     process, console = launch(case_dir, config, iso, "install", install_timeout)
     try:
         live_boot_timeout = min(boot_timeout, 120)
@@ -408,9 +427,13 @@ def run_case(name: str, config: dict[str, object], work_dir: Path, iso: Path, ve
             raise QualificationError(f"{name} installation failed; see install.serial.log")
         wait_process(process, console, 180, "install shutdown")
     finally:
-        console.close()
         stop_process(process)
+        console.drain()
+        console.close()
+    install_completed_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    install_seconds = time.monotonic() - install_started_monotonic
 
+    cold_boot_started_monotonic = time.monotonic()
     process, console = launch(case_dir, config, None, "boot", boot_timeout)
     wrong_rejected = not bool(config["encrypted"])
     try:
@@ -438,13 +461,19 @@ def run_case(name: str, config: dict[str, object], work_dir: Path, iso: Path, ve
         console.wait_for([f"BIFROST_RC_ASSERTIONS_PASSED case={name}".encode()], boot_timeout, "installed-system assertions")
         wait_process(process, console, 180, "cold-boot shutdown")
     finally:
-        console.close()
         stop_process(process)
+        console.drain()
+        console.close()
+    cold_boot_seconds = time.monotonic() - cold_boot_started_monotonic
 
     result = {
         "case": name,
         "status": "passed",
         "wrong_luks_passphrase_rejected": wrong_rejected,
+        "install_started_at": install_started_at,
+        "install_completed_at": install_completed_at,
+        "install_seconds": round(install_seconds, 3),
+        "cold_boot_seconds": round(cold_boot_seconds, 3),
         "disk": str(case_dir / "disk.qcow2"),
         "firmware_vars": str(case_dir / "OVMF_VARS.fd"),
         "install_serial_log": str(case_dir / "install.serial.log"),
@@ -455,6 +484,19 @@ def run_case(name: str, config: dict[str, object], work_dir: Path, iso: Path, ve
     return result
 
 
+def workflow_binding() -> dict[str, str] | None:
+    """Bind evidence to the exact GitHub Actions run that produced it, when present."""
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    if not run_id:
+        return None
+    return {
+        "path": ".github/workflows/qemu-release-candidate.yml",
+        "run_id": run_id,
+        "head_sha": os.environ.get("GITHUB_SHA", ""),
+        "repository": os.environ.get("GITHUB_REPOSITORY", ""),
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iso", required=True, type=Path, help="exact release-candidate ISO path (no globbing)")
@@ -462,6 +504,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--case", choices=("all", *CASES), default="all")
     parser.add_argument("--install-timeout", type=int, default=10800, help="seconds per installation")
     parser.add_argument("--boot-timeout", type=int, default=900, help="seconds per cold boot")
+    parser.add_argument(
+        "--overall-deadline",
+        type=int,
+        default=0,
+        help="overall wall-clock budget in seconds for all cases; 0 disables. "
+        "On expiry a failed result.json plus evidence is written before exiting nonzero",
+    )
     return parser.parse_args()
 
 
@@ -499,12 +548,22 @@ def main() -> int:
         },
         "cases": selected,
     }
+    workflow = workflow_binding()
+    if workflow is not None:
+        manifest["workflow"] = workflow
     (work_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     (work_dir / "iso.sha256").write_text(f"{iso_digest}  {iso.name}\n")
     results: list[dict[str, object]] = []
+    if args.overall_deadline > 0:
+        def expire_overall_deadline(signum: int, frame: object) -> None:
+            raise QualificationError(f"overall deadline of {args.overall_deadline}s expired")
+
+        signal.signal(signal.SIGALRM, expire_overall_deadline)
+        signal.alarm(args.overall_deadline)
     try:
         for name in selected:
             results.append(run_case(name, CASES[name], work_dir, iso, version, args.install_timeout, args.boot_timeout))
+        signal.alarm(0)
     except Exception as error:
         summary = {**manifest, "completed_at": dt.datetime.now(dt.timezone.utc).isoformat(), "status": "failed", "error": str(error), "results": results}
         (work_dir / "result.json").write_text(json.dumps(summary, indent=2) + "\n")

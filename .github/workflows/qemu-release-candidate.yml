@@ -33,7 +33,17 @@ jobs:
     # These labels deliberately exclude GitHub-hosted runners. The runner must be
     # Arch Linux with KVM access and qemu-desktop/edk2-ovmf already installed.
     runs-on: [self-hosted, Linux, X64, arch, kvm]
-    timeout-minutes: 400
+    # Timeout arithmetic (harness defaults: --install-timeout 10800s, --boot-timeout 900s, 2 cases):
+    #   install phase per case: 30 (serial socket) + 30 (boot menu) + 1 + 120 (live login)
+    #     + 60 (root shell) + 10800 (install) + 180 (shutdown) = 11,221 s
+    #   cold-boot phase per case: 30 (serial socket) + 300 (LUKS prompt) + 120 (wrong-passphrase
+    #     rejection) + 120 (retry prompt) + 900 (assertions) + 180 (shutdown) = 1,650 s
+    #   both cases: 2 x (11,221 + 1,650) = 25,742 s; + ISO sha256/manifest setup ~300 s = 26,042 s (~434 min)
+    #   --overall-deadline 26700 s (445 min) > 434 min, so a hung harness still writes a failed
+    #     result.json + drained serial evidence itself instead of being killed by the runner.
+    #   job cap: 445 min (deadline) + ~5 min expiry cleanup (VM teardown, result write)
+    #     + ~20 min checkout/evidence-upload headroom = 470 min.
+    timeout-minutes: 470
     env:
       INPUT_ISO: ${{ inputs.iso_path }}
       INPUT_CASE: ${{ inputs.case }}
@@ -41,7 +51,7 @@ jobs:
       DEFAULT_WORK_DIR: ${{ runner.temp }}/bifrost-qemu-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Qualify exact ISO in standard and LUKS2 virtual machines
         shell: bash
         run: |
@@ -51,6 +61,7 @@ jobs:
           python3 vm/qemu-release-candidate.py \
             --iso "$INPUT_ISO" \
             --case "$INPUT_CASE" \
+            --overall-deadline 26700 \
             --work-dir "$work_dir"
       - name: Upload compact QEMU evidence
         if: ${{ always() }}

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import argparse
 import base64
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -20,6 +21,17 @@ from typing import Iterable
 FINGERPRINT = re.compile(r"^[0-9A-F]{40}$")
 TRUSTED_APP_REF = re.compile(r"^(?:app|runtime)/org\.bifrost\.[A-Za-z0-9._-]+/[A-Za-z0-9_]+/[A-Za-z0-9._-]+$")
 AUXILIARY_REF = re.compile(r"^appstream2?/[A-Za-z0-9_]+$")
+DENYLISTED_APP_ID = "org.bifrost.TemplateCheck"
+MANIFEST_FIELDS = {
+    "bundle_sha256": re.compile(r"^[0-9a-fA-F]{64}$"),
+    "source_repository": re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"),
+    "source_revision": re.compile(r"^[0-9a-fA-F]{40}$"),
+    "app_id": re.compile(r"^org\.bifrost\.[A-Za-z0-9._-]+$"),
+    "branch": re.compile(r"^[A-Za-z0-9._-]+$"),
+    "arch": re.compile(r"^[A-Za-z0-9_]+$"),
+}
+WORKFLOW_PATH = re.compile(r"^\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$")
+WORKFLOW_RUN_ID = re.compile(r"^[0-9]+$")
 DEFAULT_URL = "https://olibuijr.github.io/BifrOSt/flatpak/repo/"
 DEFAULT_GITHUB_REPOSITORY = "olibuijr/BifrOSt"
 PUBLIC_KEY = Path("profile/airootfs/usr/share/bifrost/installed-root/usr/share/bifrost/apps/app-release-key.asc")
@@ -34,6 +46,128 @@ class StagedBundle:
     path: Path
     size: int
     sha256: str
+
+
+@dataclass(frozen=True)
+class CandidateManifest:
+    source_name: str
+    bundle_sha256: str
+    source_repository: str
+    source_revision: str
+    workflow_path: str | None
+    workflow_run_id: str | None
+    app_id: str
+    branch: str
+    arch: str
+
+    @property
+    def app_ref(self) -> str:
+        return f"app/{self.app_id}/{self.arch}/{self.branch}"
+
+
+def refuse_denylisted(values: Iterable[str], context: str) -> None:
+    denied = sorted(value for value in values if DENYLISTED_APP_ID in value.split("/"))
+    if denied:
+        raise DispatchError(f"{context} names the denylisted application {DENYLISTED_APP_ID}: {', '.join(denied)}")
+
+
+def load_candidate_manifest(path: Path) -> CandidateManifest:
+    """Parse one reviewed candidate manifest and reject anything malformed or denylisted."""
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise DispatchError(f"candidate manifest {path} is not readable JSON: {error}") from error
+    if not isinstance(document, dict):
+        raise DispatchError(f"candidate manifest {path} must be a JSON object")
+    unexpected = sorted(set(document) - set(MANIFEST_FIELDS) - {"workflow"})
+    if unexpected:
+        raise DispatchError(f"candidate manifest {path} contains unexpected keys: {', '.join(unexpected)}")
+    missing = sorted(set(MANIFEST_FIELDS) - set(document))
+    if missing:
+        raise DispatchError(f"candidate manifest {path} is missing required keys: {', '.join(missing)}")
+    fields: dict[str, str] = {}
+    for key, pattern in MANIFEST_FIELDS.items():
+        value = document[key]
+        if not isinstance(value, str) or not pattern.fullmatch(value):
+            raise DispatchError(f"candidate manifest {path} field {key!r} is malformed")
+        fields[key] = value
+    workflow_path = workflow_run_id = None
+    if "workflow" in document:
+        workflow = document["workflow"]
+        if not isinstance(workflow, dict) or set(workflow) != {"path", "run_id"}:
+            raise DispatchError(f"candidate manifest {path} workflow must contain exactly 'path' and 'run_id'")
+        workflow_path, workflow_run_id = workflow["path"], workflow["run_id"]
+        if not isinstance(workflow_path, str) or not WORKFLOW_PATH.fullmatch(workflow_path):
+            raise DispatchError(f"candidate manifest {path} workflow path is malformed")
+        if not isinstance(workflow_run_id, str) or not WORKFLOW_RUN_ID.fullmatch(workflow_run_id):
+            raise DispatchError(f"candidate manifest {path} workflow run_id is malformed")
+    refuse_denylisted([fields["app_id"]], f"candidate manifest {path}")
+    manifest = CandidateManifest(
+        source_name=path.name,
+        bundle_sha256=fields["bundle_sha256"].lower(),
+        source_repository=fields["source_repository"],
+        source_revision=fields["source_revision"].lower(),
+        workflow_path=workflow_path,
+        workflow_run_id=workflow_run_id,
+        app_id=fields["app_id"],
+        branch=fields["branch"],
+        arch=fields["arch"],
+    )
+    if not TRUSTED_APP_REF.fullmatch(manifest.app_ref):
+        raise DispatchError(f"candidate manifest {path} does not describe a trusted org.bifrost ref")
+    return manifest
+
+
+def load_candidate_manifests(paths: list[Path]) -> list[CandidateManifest]:
+    manifests = [load_candidate_manifest(path) for path in paths]
+    digests = [manifest.bundle_sha256 for manifest in manifests]
+    if len(set(digests)) != len(digests):
+        raise DispatchError("candidate manifests must name distinct bundle digests")
+    refs = [manifest.app_ref for manifest in manifests]
+    if len(set(refs)) != len(refs):
+        raise DispatchError("candidate manifests must name distinct application refs")
+    return manifests
+
+
+def auxiliary_refs(manifests: list[CandidateManifest]) -> set[str]:
+    """The only auxiliary refs a reviewed import may touch: appstream data for its architectures."""
+    return {f"{prefix}/{manifest.arch}" for manifest in manifests for prefix in ("appstream", "appstream2")}
+
+
+def bundle_refs(bundle: Path) -> set[str]:
+    """Discover the refs a bundle would import via a throwaway quarantine repository, before any signing."""
+    with tempfile.TemporaryDirectory(prefix="bifrost-app-quarantine-") as quarantine_name:
+        quarantine = Path(quarantine_name) / "repo"
+        run(["ostree", f"--repo={quarantine}", "init", "--mode=archive-z2"])
+        run(["flatpak", "build-import-bundle", str(quarantine), str(bundle)])
+        return repository_refs(quarantine)
+
+
+def admit_candidates(artifacts: list[StagedBundle], manifests: list[CandidateManifest]) -> None:
+    """Refuse to sign any staged bundle the release operator has not reviewed byte-for-byte."""
+    if len(artifacts) != len(manifests):
+        raise DispatchError(
+            f"{len(artifacts)} staged bundle(s) but {len(manifests)} candidate manifest(s); "
+            "every bundle requires exactly one reviewed manifest"
+        )
+    remaining = {manifest.bundle_sha256: manifest for manifest in manifests}
+    for artifact in artifacts:
+        manifest = remaining.pop(artifact.sha256, None)
+        if manifest is None:
+            raise DispatchError(
+                f"staged bundle {artifact.source_name!r} (sha256 {artifact.sha256}) matches no candidate manifest"
+            )
+        refs = bundle_refs(artifact.path)
+        refuse_denylisted(refs, f"bundle {artifact.source_name!r}")
+        if refs != {manifest.app_ref}:
+            raise DispatchError(
+                f"bundle {artifact.source_name!r} carries refs {', '.join(sorted(refs)) or 'none'} "
+                f"but manifest {manifest.source_name!r} admits only {manifest.app_ref}"
+            )
+        print(
+            f"Admitted {artifact.source_name!r} as {manifest.app_ref} "
+            f"from {manifest.source_repository}@{manifest.source_revision}"
+        )
 
 
 def stage_bundle_files(bundles: list[Path], directory: Path) -> list[StagedBundle]:
@@ -84,6 +218,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--bundle", type=Path, action="append", default=[], help=".flatpak bundle to import; repeatable")
+    parser.add_argument(
+        "--candidate-manifest",
+        type=Path,
+        action="append",
+        required=True,
+        default=[],
+        help="reviewed candidate manifest JSON (one per --bundle): bundle_sha256, source_repository, source_revision, app_id, branch, arch, optional workflow",
+    )
     parser.add_argument("--repository", type=Path, default=Path("release/flatpak-repo"), help="local signed repository")
     parser.add_argument(
         "--definition",
@@ -188,6 +330,7 @@ def validate_refs(refs: set[str]) -> None:
     invalid = sorted(ref for ref in refs if not TRUSTED_APP_REF.fullmatch(ref) and not AUXILIARY_REF.fullmatch(ref))
     if invalid:
         raise DispatchError(f"repository contains refs outside the org.bifrost namespace: {', '.join(invalid)}")
+    refuse_denylisted(refs, "repository")
 
 
 def write_definition(path: Path, url: str, public_key: bytes) -> None:
@@ -212,7 +355,15 @@ def write_definition(path: Path, url: str, public_key: bytes) -> None:
     temporary.replace(path)
 
 
-def stage_repository(repository: Path, bundles: list[Path], fingerprint: str, homedir: Path, public_key: bytes) -> Path:
+def stage_repository(
+    repository: Path,
+    bundles: list[Path],
+    fingerprint: str,
+    homedir: Path,
+    public_key: bytes,
+    expected_refs: set[str],
+    allowed_auxiliary: set[str],
+) -> Path:
     repository.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{repository.name}.", dir=repository.parent))
     try:
@@ -220,6 +371,8 @@ def stage_repository(repository: Path, bundles: list[Path], fingerprint: str, ho
         run(["ostree", f"--repo={staging}", "config", "set", "core.collection-id", "org.bifrost.Apps"])
         if (repository / "config").is_file():
             run(["ostree", f"--repo={staging}", "pull-local", "--depth=-1", str(repository)])
+        prior_refs = repository_refs(staging)
+        validate_refs(prior_refs)
         with tempfile.NamedTemporaryFile(prefix="bifrost-app-key-", suffix=".gpg") as key_file:
             key_file.write(public_key)
             key_file.flush()
@@ -235,7 +388,14 @@ def stage_repository(repository: Path, bundles: list[Path], fingerprint: str, ho
                         str(bundle),
                     ]
                 )
-            validate_refs(repository_refs(staging))
+            current_refs = repository_refs(staging)
+            validate_refs(current_refs)
+            unexpected = sorted(current_refs - prior_refs - expected_refs - allowed_auxiliary)
+            if unexpected:
+                raise DispatchError(f"import introduced refs outside the reviewed candidate set: {', '.join(unexpected)}")
+            missing = sorted(expected_refs - current_refs)
+            if missing:
+                raise DispatchError(f"import did not produce the reviewed candidate refs: {', '.join(missing)}")
             run(
                 [
                     "flatpak",
@@ -317,6 +477,7 @@ def main() -> int:
         public_key_path = args.public_key.resolve()
         url = validate_url(args.repository_url, allow_local=args.allow_local_url)
         fingerprint, public_key = validate_key(args.gpg_key, homedir, public_key_path)
+        manifests = load_candidate_manifests(list(args.candidate_manifest))
         bundles = list(args.bundle)
         with tempfile.TemporaryDirectory(prefix="bifrost-app-bundles-") as bundle_directory_name:
             artifacts = stage_bundle_files(bundles, Path(bundle_directory_name))
@@ -325,12 +486,15 @@ def main() -> int:
                     f"Importing {artifact.source_name!r}: "
                     f"{artifact.size} bytes, sha256 {artifact.sha256}"
                 )
+            admit_candidates(artifacts, manifests)
             staging = stage_repository(
                 repository,
                 [artifact.path for artifact in artifacts],
                 fingerprint,
                 homedir,
                 public_key,
+                expected_refs={manifest.app_ref for manifest in manifests},
+                allowed_auxiliary=auxiliary_refs(manifests),
             )
             replace_repository(repository, staging)
         write_definition(definition, url, public_key)

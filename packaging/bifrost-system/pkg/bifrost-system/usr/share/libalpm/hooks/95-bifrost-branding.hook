@@ -1,0 +1,11 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = cosmic-bg
+Target = plymouth
+
+[Action]
+Description = Reapplying BifrOSt desktop and boot branding...
+When = PostTransaction
+Exec = /usr/lib/bifrost-maintenance/apply-branding

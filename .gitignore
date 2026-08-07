@@ -37,3 +37,7 @@ id_dsa
 id_ecdsa
 id_ed25519
 *-secrets.json
+/.tmp/packaging/bifrost-system/pkg/
+packaging/bifrost-system/src/
+*.pkg.tar.zst
+*.pkg.tar.zst.sig

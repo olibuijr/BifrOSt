@@ -869,13 +869,63 @@ with open(sys.argv[3], "a") as output:
 ' "$SECRETS_INPUT" "$GENERATED_CREDS" "$RAW_LOG"
 }
 
+verify_package_seed() {
+    python3 - "$1" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+try:
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    raise SystemExit(f"seed manifest is unreadable: {error}")
+files = manifest.get("files") if isinstance(manifest, dict) else None
+if (
+    not isinstance(manifest, dict)
+    or manifest.get("schema_version") != 1
+    or manifest.get("purpose") != "online-installer-package-seed"
+    or manifest.get("complete", True) is not True
+    or not isinstance(files, list)
+    or not files
+):
+    raise SystemExit("seed manifest schema is invalid")
+names = set()
+for record in files:
+    if (
+        not isinstance(record, dict)
+        or not isinstance(record.get("name"), str)
+        or Path(record["name"]).name != record["name"]
+        or not isinstance(record.get("bytes"), int)
+        or isinstance(record.get("bytes"), bool)
+        or record["bytes"] <= 0
+        or not isinstance(record.get("sha256"), str)
+    ):
+        raise SystemExit("seed manifest file inventory is invalid")
+    path = root / record["name"]
+    if (
+        not path.is_file()
+        or path.stat().st_size != record["bytes"]
+        or hashlib.file_digest(path.open("rb"), "sha256").hexdigest() != record["sha256"]
+    ):
+        raise SystemExit(f"seed file failed verification: {record['name']}")
+    names.add(record["name"])
+for name in names:
+    if not name.endswith(".sig") and f"{name}.sig" not in names:
+        raise SystemExit(f"seed package is missing its detached signature: {name}")
+PY
+}
+
 archinstall_command() {
     local mode=$1 wrapper_dir="$RUNTIME_DIR/archinstall-path"
     local seed_cache=/usr/share/bifrost/installer-cache
-    local seeded_config="$RUNTIME_DIR/pacman-seeded.conf"
+    local seeded_config="$RUNTIME_DIR/pacman-seeded.conf" seed_error
     install -d -m 0700 "$wrapper_dir"
+    unset BIFROST_PACMAN_CONF
     if [[ -f $seed_cache/manifest.json ]]; then
-        python3 - /etc/pacman.conf "$seeded_config" "$seed_cache" <<'PY'
+        if seed_error=$(verify_package_seed "$seed_cache" 2>&1); then
+            python3 - /etc/pacman.conf "$seeded_config" "$seed_cache" <<'PY'
 import sys
 from pathlib import Path
 
@@ -900,9 +950,10 @@ if not inserted:
     raise SystemExit("[options] is missing from the live pacman configuration")
 destination.write_text("\n".join(result) + "\n", encoding="utf-8")
 PY
-        export BIFROST_PACMAN_CONF=$seeded_config
-    else
-        unset BIFROST_PACMAN_CONF
+            export BIFROST_PACMAN_CONF=$seeded_config
+        else
+            echo "warning: ignoring package seed at $seed_cache (${seed_error:-verification failed}); continuing with the online package cache"
+        fi
     fi
     cat >"$wrapper_dir/pacstrap" <<'SH'
 #!/usr/bin/bash
@@ -928,7 +979,7 @@ SH
     [[ $mode == offline ]] && command+=(--offline)
     # Archinstall initializes an empty target keyring. The constrained wrapper
     # removes only -K so pacstrap copies the populated live keyring. When the
-    # signed package seed is present, -c lets every pacstrap transaction reuse
+    # signed package seed verifies, -c lets every pacstrap transaction reuse
     # it and fall back to the live writable cache for packages not on the ISO.
     PATH="$wrapper_dir:$PATH" "${command[@]}" "${@:2}" 2>&1 | sanitize_archinstall_stream
 }

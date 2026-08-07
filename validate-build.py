@@ -163,6 +163,19 @@ def validate_tracked_files(root: Path) -> None:
             raise ValidationError(f"secret or disk/build artifact must not be tracked: {name}")
 
 
+def validate_airootfs_hygiene(root: Path) -> None:
+    airootfs = root / "profile/airootfs"
+    debris = sorted(
+        str(path.relative_to(root))
+        for path in airootfs.rglob("*")
+        if path.name == "__pycache__" or path.suffix == ".pyc"
+    )
+    if debris:
+        raise ValidationError(
+            f"interpreter cache debris must not be staged under profile/airootfs: {', '.join(debris)}"
+        )
+
+
 def read_package_names(path: Path) -> set[str]:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -352,7 +365,10 @@ def validate_release_contract(root: Path) -> None:
         raise ValidationError("release publisher contains a destructive replacement path")
     required_publication = (
         "verify_remote_tag",
-        "require_no_release",
+        "require_publishable_state",
+        "stage_release_inputs",
+        "verify_workflow_binding",
+        "install_seconds",
         "verify_signature",
         "provenance_status",
         "toolchain_manifest_sha256",
@@ -376,6 +392,7 @@ def main() -> int:
     try:
         validate_sources(root)
         validate_tracked_files(root)
+        validate_airootfs_hygiene(root)
         validate_profile(root)
         validate_release_contract(root)
     except (OSError, ValidationError) as error:

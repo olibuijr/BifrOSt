@@ -11,7 +11,9 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import stat
 import sys
+import tempfile
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -22,6 +24,7 @@ VERSION_FILE = ROOT / "VERSION"
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 FINGERPRINT = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+QEMU_WORKFLOW_PATH = ".github/workflows/qemu-release-candidate.yml"
 
 
 class PublicationError(Exception):
@@ -46,6 +49,14 @@ def parse_args() -> argparse.Namespace:
         help="successful exact-ISO standard and LUKS2 qualification evidence",
     )
     parser.add_argument("--notes-file", required=True, type=Path, help="release notes passed unchanged to GitHub")
+    parser.add_argument(
+        "--allow-local-qualification",
+        action="store_true",
+        help=(
+            "accept QEMU evidence without GitHub workflow provenance, for air-gapped "
+            "operation only; logs loudly and is OFF by default"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -102,6 +113,32 @@ def run(command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = No
     return completed.stdout.strip()
 
 
+def validsig_fingerprints(status_output: str, subject: str) -> tuple[str, str]:
+    """Parse the single VALIDSIG status record into (signature key, primary key) fingerprints.
+
+    The documented VALIDSIG format is: fingerprint, creation date, creation
+    timestamp, expiry timestamp, version, reserved, pubkey algo, hash algo,
+    signature class, primary-key fingerprint. Only the tenth (last) field names
+    the primary key, so a signing-subkey fingerprint can never satisfy a
+    primary-key requirement.
+    """
+    records = [
+        line.split()[2:]
+        for line in status_output.splitlines()
+        if line.startswith("[GNUPG:] VALIDSIG ")
+    ]
+    if len(records) != 1:
+        raise PublicationError(f"{subject} did not produce exactly one VALIDSIG record")
+    fields = records[0]
+    if len(fields) != 10:
+        raise PublicationError(f"{subject} produced a malformed VALIDSIG record")
+    signature_key = fields[0].lower()
+    primary_key = fields[9].lower()
+    if not FINGERPRINT.fullmatch(signature_key) or not FINGERPRINT.fullmatch(primary_key):
+        raise PublicationError(f"{subject} produced a malformed VALIDSIG fingerprint")
+    return signature_key, primary_key
+
+
 def verify_local_source(tag: str, revision: str, signer_fingerprint: str) -> None:
     head = run(["git", "rev-parse", "--verify", "HEAD^{commit}"]).lower()
     tagged = run(["git", "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}"]).lower()
@@ -119,19 +156,10 @@ def verify_local_source(tag: str, revision: str, signer_fingerprint: str) -> Non
     if verified.returncode:
         detail = verified.stderr.strip() or verified.stdout.strip() or "signature verification failed"
         raise PublicationError(f"git verify-tag --raw {tag} failed: {detail}")
-    valid_lines = [
-        line.split()
-        for line in (verified.stdout + "\n" + verified.stderr).splitlines()
-        if line.startswith("[GNUPG:] VALIDSIG ")
-    ]
-    if len(valid_lines) != 1:
-        raise PublicationError(f"tag {tag} did not produce exactly one VALIDSIG record")
-    tag_fingerprints = {
-        field.lower()
-        for field in valid_lines[0][2:]
-        if FINGERPRINT.fullmatch(field.lower())
-    }
-    if signer_fingerprint not in tag_fingerprints:
+    _, primary_fingerprint = validsig_fingerprints(
+        verified.stdout + "\n" + verified.stderr, f"tag {tag}"
+    )
+    if primary_fingerprint != signer_fingerprint:
         raise PublicationError(
             f"tag {tag} is not rooted in trusted primary fingerprint {signer_fingerprint}"
         )
@@ -141,7 +169,7 @@ def verify_local_source(tag: str, revision: str, signer_fingerprint: str) -> Non
         raise PublicationError(f"tag {tag} resolves to {tagged}, not source revision {revision}")
 
 
-def github_request(repository: str, path: str, token: str) -> tuple[int, Any]:
+def github_request(repository: str, path: str, token: str, *, method: str = "GET") -> tuple[int, Any]:
     request = Request(
         f"https://api.github.com/repos/{repository}/{path}",
         headers={
@@ -150,6 +178,7 @@ def github_request(repository: str, path: str, token: str) -> tuple[int, Any]:
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "bifrost-release-publisher",
         },
+        method=method,
     )
     try:
         with urlopen(request, timeout=30) as response:
@@ -187,15 +216,41 @@ def verify_remote_tag(repository: str, tag: str, revision: str, token: str) -> N
         raise PublicationError(f"remote tag {tag} does not resolve to source revision {revision}")
 
 
-def require_no_release(repository: str, tag: str, token: str) -> None:
+def find_release(repository: str, tag: str, token: str) -> dict[str, Any] | None:
+    """Return the release for the exact tag, including drafts, or None when absent."""
     status, release = github_request(repository, f"releases/tags/{quote(tag, safe='')}", token)
-    if status == 404:
-        return
-    if status == 200:
-        immutable = release.get("immutable") if isinstance(release, dict) else None
-        suffix = " (immutable)" if immutable else ""
+    if status == 200 and isinstance(release, dict):
+        return release
+    if status != 404:
+        raise PublicationError(f"cannot prove release {tag} is absent (GitHub HTTP {status})")
+    # Draft releases are not addressable through releases/tags; scan the listing.
+    status, releases = github_request(repository, "releases?per_page=100", token)
+    if status != 200 or not isinstance(releases, list):
+        raise PublicationError(f"cannot enumerate releases for {tag} (GitHub HTTP {status})")
+    matches = [
+        release
+        for release in releases
+        if isinstance(release, dict) and release.get("tag_name") == tag
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise PublicationError(f"release listing for {tag} is ambiguous; refusing to continue")
+    return matches[0]
+
+
+def require_publishable_state(repository: str, tag: str, token: str) -> dict[str, Any] | None:
+    """Allow publication only when the tag has no release or an unpublished draft to resume."""
+    release = find_release(repository, tag, token)
+    if release is None:
+        return None
+    if release.get("draft") is not True:
+        suffix = " (immutable)" if release.get("immutable") else ""
         raise PublicationError(f"release {tag} already exists{suffix}; replacement is forbidden")
-    raise PublicationError(f"cannot prove release {tag} is absent (GitHub HTTP {status})")
+    if not isinstance(release.get("id"), int):
+        raise PublicationError(f"draft release for {tag} has no usable identifier")
+    print(f"publish-release.py: found existing draft for {tag}; resuming idempotently", file=sys.stderr)
+    return release
 
 
 def nested(value: dict[str, Any], *keys: str) -> Any:
@@ -220,33 +275,18 @@ def verify_signature(content: Path, signature: Path, expected_fingerprint: str) 
     if completed.returncode:
         detail = completed.stderr.strip() or "gpg rejected the signature"
         raise PublicationError(f"invalid detached signature {signature.name}: {detail}")
-    valid_lines = []
-    for line in completed.stdout.splitlines():
-        fields = line.split()
-        if len(fields) >= 3 and fields[:2] == ["[GNUPG:]", "VALIDSIG"]:
-            valid_lines.append(fields)
-    if len(valid_lines) != 1:
-        raise PublicationError(f"signature {signature.name} did not produce exactly one VALIDSIG record")
-    signature_fingerprints = {
-        field.lower()
-        for field in valid_lines[0][2:]
-        if FINGERPRINT.fullmatch(field.lower())
-    }
-    if expected_fingerprint not in signature_fingerprints:
+    _, primary_fingerprint = validsig_fingerprints(
+        completed.stdout, f"signature {signature.name}"
+    )
+    if primary_fingerprint != expected_fingerprint:
         raise PublicationError(
             f"signature {signature.name} is not rooted in expected primary fingerprint {expected_fingerprint}"
         )
 
 
-def verify_assets(
-    asset_dir: Path,
-    version: str,
-    tag: str,
-    revision: str,
-    trusted_signer: str,
-) -> list[Path]:
+def expected_asset_names(version: str) -> list[str]:
     stem = f"bifrost-{version}-x86_64"
-    expected_names = [
+    return [
         f"{stem}.iso",
         f"{stem}.iso.sha256",
         f"{stem}.iso.sha256.asc",
@@ -256,7 +296,65 @@ def verify_assets(
         f"{stem}.release.json",
         f"{stem}.release.json.asc",
     ]
-    assets = [asset_dir / name for name in expected_names]
+
+
+def stage_file(source: Path, destination: Path) -> None:
+    """Copy one caller-controlled file exactly once into the private staging area."""
+    open_flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        source_descriptor = os.open(source, open_flags)
+    except OSError as error:
+        raise PublicationError(f"{source} must be an accessible regular, non-symlink file") from error
+    try:
+        if not stat.S_ISREG(os.fstat(source_descriptor).st_mode):
+            raise PublicationError(f"{source} must be a regular, non-symlink file")
+        destination_descriptor = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+            0o600,
+        )
+        try:
+            with os.fdopen(source_descriptor, "rb", closefd=False) as reader, os.fdopen(
+                destination_descriptor, "wb", closefd=False
+            ) as writer:
+                shutil.copyfileobj(reader, writer, length=1024 * 1024)
+                writer.flush()
+                os.fsync(writer.fileno())
+        finally:
+            os.close(destination_descriptor)
+    finally:
+        os.close(source_descriptor)
+    os.chmod(destination, 0o400)
+
+
+def stage_release_inputs(asset_dir: Path, notes_file: Path, version: str) -> tuple[Path, list[Path], Path]:
+    """Copy every release asset and the notes file once into a fresh private staging
+    directory so validation, upload, and post-upload re-hashing read immutable copies
+    that a caller cannot swap between verification and publication."""
+    staging_dir = Path(tempfile.mkdtemp(prefix=".bifrost-publish-staging-", dir=ROOT))
+    os.chmod(staging_dir, 0o700)
+    asset_root = staging_dir / "assets"
+    notes_root = staging_dir / "notes"
+    asset_root.mkdir(mode=0o700)
+    notes_root.mkdir(mode=0o700)
+    staged_assets: list[Path] = []
+    for name in expected_asset_names(version):
+        destination = asset_root / name
+        stage_file(asset_dir / name, destination)
+        staged_assets.append(destination)
+    staged_notes = notes_root / notes_file.name
+    stage_file(notes_file, staged_notes)
+    return staging_dir, staged_assets, staged_notes
+
+
+def verify_assets(
+    asset_dir: Path,
+    version: str,
+    tag: str,
+    revision: str,
+    trusted_signer: str,
+) -> list[Path]:
+    assets = [asset_dir / name for name in expected_asset_names(version)]
     missing = [path.name for path in assets if not path.is_file()]
     if missing:
         raise PublicationError(f"release asset set is incomplete: {', '.join(missing)}")
@@ -369,7 +467,15 @@ def verify_assets(
     verify_signature(attestation_path, attestation_signature, signer)
     return assets
 
-def verify_qemu_evidence(evidence_dir: Path, version: str, iso: Path) -> None:
+def verify_qemu_evidence(
+    evidence_dir: Path,
+    version: str,
+    iso: Path,
+    repository: str,
+    revision: str,
+    token: str,
+    allow_local_qualification: bool,
+) -> None:
     if not evidence_dir.is_dir() or evidence_dir.is_symlink():
         raise PublicationError("--qemu-evidence-dir must be a real directory")
     result = load_json(evidence_dir / "result.json")
@@ -403,37 +509,195 @@ def verify_qemu_evidence(evidence_dir: Path, version: str, iso: Path) -> None:
         record = by_case[case]
         if record.get("status") != "passed":
             raise PublicationError(f"QEMU {case} qualification did not pass")
+        install_seconds = record.get("install_seconds")
+        if (
+            isinstance(install_seconds, bool)
+            or not isinstance(install_seconds, (int, float))
+            or not 0 < install_seconds < float("inf")
+        ):
+            raise PublicationError(
+                f"QEMU {case} evidence must record a positive install_seconds duration"
+            )
     if by_case["luks2"].get("wrong_luks_passphrase_rejected") is not True:
         raise PublicationError("QEMU LUKS2 evidence does not prove wrong-passphrase rejection")
+    verify_workflow_binding(result, repository, revision, token, allow_local_qualification)
 
 
+def verify_workflow_binding(
+    result: dict[str, Any],
+    repository: str,
+    revision: str,
+    token: str,
+    allow_local_qualification: bool,
+) -> None:
+    """Bind result.json to the successful GitHub qualification run that produced it."""
+    if allow_local_qualification:
+        for line in (
+            "=" * 72,
+            "WARNING: --allow-local-qualification is enabled.",
+            "WARNING: QEMU evidence is accepted WITHOUT GitHub workflow provenance.",
+            "WARNING: this escape hatch exists only for air-gapped operation.",
+            "=" * 72,
+        ):
+            print(f"publish-release.py: {line}", file=sys.stderr)
+        return
+    binding = result.get("workflow")
+    if not isinstance(binding, dict):
+        raise PublicationError(
+            "QEMU evidence lacks the producing workflow identity; re-run qualification in "
+            "CI or pass --allow-local-qualification for air-gapped operation"
+        )
+    if binding.get("path") != QEMU_WORKFLOW_PATH:
+        raise PublicationError(f"QEMU evidence workflow path must be {QEMU_WORKFLOW_PATH}")
+    if binding.get("repository") != repository:
+        raise PublicationError("QEMU evidence workflow repository does not match --repository")
+    run_id = binding.get("run_id")
+    if isinstance(run_id, str) and run_id.isascii() and run_id.isdigit():
+        run_id = int(run_id)
+    if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id <= 0:
+        raise PublicationError("QEMU evidence workflow run_id must be a positive run identifier")
+    if str(binding.get("head_sha", "")).lower() != revision:
+        raise PublicationError(
+            "QEMU evidence workflow head_sha does not equal the release source revision"
+        )
+    if shutil.which("gh") is None:
+        raise PublicationError("gh is required to verify QEMU qualification provenance")
+    environment = os.environ.copy()
+    environment["GH_TOKEN"] = token
+    raw = run(["gh", "api", f"repos/{repository}/actions/runs/{run_id}"], env=environment)
+    try:
+        record = json.loads(raw)
+    except ValueError as error:
+        raise PublicationError(f"cannot parse qualification workflow run {run_id}: {error}") from error
+    if not isinstance(record, dict) or record.get("id") != run_id:
+        raise PublicationError(f"qualification workflow run {run_id} could not be resolved")
+    if record.get("path") != QEMU_WORKFLOW_PATH:
+        raise PublicationError(
+            f"workflow run {run_id} was not produced by {QEMU_WORKFLOW_PATH}"
+        )
+    if record.get("status") != "completed" or record.get("conclusion") != "success":
+        raise PublicationError(f"workflow run {run_id} did not complete successfully")
+    if str(record.get("head_sha", "")).lower() != revision:
+        raise PublicationError(
+            f"workflow run {run_id} head_sha does not equal the release source revision"
+        )
 
-def publish(repository: str, tag: str, notes: Path, assets: list[Path], token: str) -> None:
+
+def delete_draft_asset(repository: str, asset: dict[str, Any], token: str) -> None:
+    asset_id = asset.get("id")
+    if not isinstance(asset_id, int):
+        raise PublicationError("draft release asset has no usable identifier")
+    status, _ = github_request(repository, f"releases/assets/{asset_id}", token, method="DELETE")
+    if status != 204:
+        raise PublicationError(
+            f"cannot delete stale draft asset {asset.get('name')} (GitHub HTTP {status})"
+        )
+
+
+def reconcile_draft_assets(
+    repository: str,
+    tag: str,
+    draft: dict[str, Any],
+    assets: list[Path],
+    token: str,
+    environment: dict[str, str],
+) -> None:
+    """Make an interrupted draft's uploaded assets equal the staged, verified set."""
+    staged_by_name = {path.name: path for path in assets}
+    remote_assets = draft.get("assets") or []
+    if not isinstance(remote_assets, list):
+        raise PublicationError("draft release asset listing is malformed")
+    present: set[str] = set()
+    for item in remote_assets:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+            raise PublicationError("draft release contains an unidentifiable asset")
+        name = item["name"]
+        staged = staged_by_name.get(name)
+        if (
+            staged is not None
+            and name not in present
+            and item.get("size") == staged.stat().st_size
+            and item.get("digest") == f"sha256:{sha256_file(staged)}"
+        ):
+            present.add(name)
+            continue
+        print(
+            f"publish-release.py: deleting draft asset {name} that does not match the staged set",
+            file=sys.stderr,
+        )
+        delete_draft_asset(repository, item, token)
+    missing = [path for path in assets if path.name not in present]
+    if missing:
+        run(
+            [
+                "gh",
+                "release",
+                "upload",
+                tag,
+                "--repo",
+                repository,
+                *[str(path.resolve()) for path in missing],
+            ],
+            env=environment,
+        )
+
+def publish(
+    repository: str,
+    tag: str,
+    notes: Path,
+    assets: list[Path],
+    revision: str,
+    token: str,
+) -> None:
     if shutil.which("gh") is None:
         raise PublicationError("gh is required to publish the verified release")
     if not notes.is_file():
         raise PublicationError(f"release notes file does not exist: {notes}")
     environment = os.environ.copy()
     environment["GH_TOKEN"] = token
-    create_command = [
-        "gh",
-        "release",
-        "create",
-        tag,
-        "--repo",
-        repository,
-        "--verify-tag",
-        "--draft",
-        "--title",
-        f"BifrOSt {tag.removeprefix('v')}",
-        "--notes-file",
-        str(notes.resolve()),
-        "--latest=false",
-        *[str(path.resolve()) for path in assets],
-    ]
-    run(create_command, env=environment)
-    status, draft = github_request(repository, f"releases/tags/{quote(tag, safe='')}", token)
-    if status != 200 or not isinstance(draft, dict) or draft.get("draft") is not True:
+    existing = require_publishable_state(repository, tag, token)
+    if existing is None:
+        create_command = [
+            "gh",
+            "release",
+            "create",
+            tag,
+            "--repo",
+            repository,
+            "--verify-tag",
+            "--draft",
+            "--title",
+            f"BifrOSt {tag.removeprefix('v')}",
+            "--notes-file",
+            str(notes.resolve()),
+            "--latest=false",
+            *[str(path.resolve()) for path in assets],
+        ]
+        run(create_command, env=environment)
+    else:
+        target = str(existing.get("target_commitish") or "").lower()
+        if REVISION.fullmatch(target) and target != revision:
+            raise PublicationError(
+                f"existing draft for {tag} targets {target}, not source revision {revision}"
+            )
+        run(
+            [
+                "gh",
+                "release",
+                "edit",
+                tag,
+                "--repo",
+                repository,
+                "--draft=true",
+                "--notes-file",
+                str(notes.resolve()),
+                "--latest=false",
+            ],
+            env=environment,
+        )
+        reconcile_draft_assets(repository, tag, existing, assets, token, environment)
+    draft = find_release(repository, tag, token)
+    if not isinstance(draft, dict) or draft.get("draft") is not True:
         raise PublicationError("uploaded release could not be proven to remain a draft")
     remote_assets = draft.get("assets")
     if not isinstance(remote_assets, list) or len(remote_assets) != len(assets):
@@ -464,8 +728,8 @@ def publish(repository: str, tag: str, notes: Path, assets: list[Path], token: s
         ],
         env=environment,
     )
-    status, published = github_request(repository, f"releases/tags/{quote(tag, safe='')}", token)
-    if status != 200 or not isinstance(published, dict) or published.get("draft") is not False:
+    published = find_release(repository, tag, token)
+    if not isinstance(published, dict) or published.get("draft") is not False:
         raise PublicationError("release publication could not be confirmed")
 
 
@@ -492,11 +756,28 @@ def main() -> int:
 
         verify_local_source(tag, revision, signer_fingerprint)
         verify_remote_tag(repository, tag, revision, token)
-        require_no_release(repository, tag, token)
-        assets = verify_assets(args.asset_dir.resolve(), version, tag, revision, signer_fingerprint)
-        verify_qemu_evidence(args.qemu_evidence_dir.resolve(), version, assets[0])
-        require_no_release(repository, tag, token)
-        publish(repository, tag, args.notes_file, assets, token)
+        require_publishable_state(repository, tag, token)
+        staging_dir: Path | None = None
+        try:
+            staging_dir, staged_assets, staged_notes = stage_release_inputs(
+                args.asset_dir.resolve(), args.notes_file.resolve(), version
+            )
+            assets = verify_assets(
+                staged_assets[0].parent, version, tag, revision, signer_fingerprint
+            )
+            verify_qemu_evidence(
+                args.qemu_evidence_dir.resolve(),
+                version,
+                assets[0],
+                repository,
+                revision,
+                token,
+                args.allow_local_qualification,
+            )
+            publish(repository, tag, staged_notes, assets, revision, token)
+        finally:
+            if staging_dir is not None:
+                shutil.rmtree(staging_dir, ignore_errors=True)
         print(f"published verified release {repository} {tag} without replacing existing state")
         return 0
     except (OSError, PublicationError) as error:
