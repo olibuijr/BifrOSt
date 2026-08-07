@@ -2,61 +2,61 @@
   "architecture": "any",
   "files": {
     "alpm-repository-key.asc": {
-      "sha256": "d8225a83713198d6d825395fc69a749f258acc3cc7372f3854e6654fe5314b7a",
+      "sha256": "857947444ec47c36ae98e1b1d52f7dc41d3560a424e9561ff88f791b0de40764",
       "size": 441
     },
     "alpm-repository-key.fingerprint": {
-      "sha256": "c667dde495ab0933073fc028a450a70652a453a89d79063bb450c66822c11fe1",
+      "sha256": "9d628c5e5b07c9fd2fca7120c14983e0eaae0febb84a620914c26a09ada61249",
       "size": 41
     },
     "alpm-repository-key.gpg": {
-      "sha256": "643d129e8342f6e500c4627ecb51c1872eb2924ccc86ed559899951ed4923c72",
+      "sha256": "ae2e938433c96ad821958c0b6d59a268002fcdf300e2387931ce7971abaec8dc",
       "size": 266
     },
-    "bifrost-system-0.2.1-6-any.pkg.tar.zst": {
-      "sha256": "4a094d7fb43e25a73a91ffbb68fe0647589a2985df7e261005da5e1e60d371f4",
-      "size": 5457980
+    "bifrost-system-0.2.2-1-any.pkg.tar.zst": {
+      "sha256": "ef982d68649719ee5c0d433b7fed3c0e5d7468396735f0bc9e4fcd35a7303903",
+      "size": 5457822
     },
-    "bifrost-system-0.2.1-6-any.pkg.tar.zst.sig": {
-      "sha256": "f905bcccd29e676dde925c34c08c238d12998f8d96040ad962fbe26c1df1f253",
+    "bifrost-system-0.2.2-1-any.pkg.tar.zst.sig": {
+      "sha256": "3a918bd5e7943bf6c945aa9c0b70e99b6186ba7a305b3461b70d70221ef0d37e",
       "size": 119
     },
     "bifrost.db": {
-      "sha256": "a690f1c7747848edb1bcc2de0bb456159825c1def4f7b3882eac4d9bd1ded5b8",
+      "sha256": "6849ec7276c98655e43726412d9d839b63c5e935fe6d321770985738a1d32c78",
       "size": 517
     },
     "bifrost.db.sig": {
-      "sha256": "77376547cf1925f8276f72746674af7a071197e56a8a44d732e3c32feb91c059",
+      "sha256": "7678b90efbeb1bbda9ef265040cb72cabb3299da571e18e708c821110cec1c7c",
       "size": 119
     },
     "bifrost.db.tar.gz": {
-      "sha256": "a690f1c7747848edb1bcc2de0bb456159825c1def4f7b3882eac4d9bd1ded5b8",
+      "sha256": "6849ec7276c98655e43726412d9d839b63c5e935fe6d321770985738a1d32c78",
       "size": 517
     },
     "bifrost.db.tar.gz.sig": {
-      "sha256": "77376547cf1925f8276f72746674af7a071197e56a8a44d732e3c32feb91c059",
+      "sha256": "7678b90efbeb1bbda9ef265040cb72cabb3299da571e18e708c821110cec1c7c",
       "size": 119
     },
     "bifrost.files": {
-      "sha256": "5e3d4af91bdfec4e4b2e8944f3fd2531be6a6e3f18f2d7b7ae44a1d4a583f0a1",
+      "sha256": "07ed765daee9d4b32aea66431f9d5bb06ff1b0a3dcfa79cf13a42116982c905b",
       "size": 1233
     },
     "bifrost.files.sig": {
-      "sha256": "e57f978b418c7c905596cea5679c701d37a105cebe1b3583f1cadc864ea4f184",
+      "sha256": "7b57697c0ff61e9fb39db47c0bcaf0e5eaaac80b35e093cce4c81a702afb3137",
       "size": 119
     },
     "bifrost.files.tar.gz": {
-      "sha256": "5e3d4af91bdfec4e4b2e8944f3fd2531be6a6e3f18f2d7b7ae44a1d4a583f0a1",
+      "sha256": "07ed765daee9d4b32aea66431f9d5bb06ff1b0a3dcfa79cf13a42116982c905b",
       "size": 1233
     },
     "bifrost.files.tar.gz.sig": {
-      "sha256": "e57f978b418c7c905596cea5679c701d37a105cebe1b3583f1cadc864ea4f184",
+      "sha256": "7b57697c0ff61e9fb39db47c0bcaf0e5eaaac80b35e093cce4c81a702afb3137",
       "size": 119
     }
   },
-  "package_version": "0.2.1-6",
+  "package_version": "0.2.2-1",
   "repository": "bifrost-system",
   "schema_version": 1,
-  "signing_fingerprint": "69D95C1EA4E97AB5FB9580AAFED54F3B9691E1C2",
-  "version": "0.2.1"
+  "signing_fingerprint": "F5CE992078EA20EA8469A05FC68D23E4208D553F",
+  "version": "0.2.2"
 }
