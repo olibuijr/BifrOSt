@@ -131,6 +131,11 @@ class SerialConsole:
     def clear(self) -> None:
         self.buffer.clear()
 
+    def discard_through(self, needle: bytes) -> None:
+        end = self.buffer.rfind(needle) + len(needle)
+        del self.buffer[:end]
+
+
     def send_script(self, script: str) -> None:
         encoded = base64.b64encode(script.encode()).decode()
         self.send(": > /run/bifrost-rc.b64\n")
@@ -410,11 +415,24 @@ def run_case(name: str, config: dict[str, object], work_dir: Path, iso: Path, ve
     wrong_rejected = not bool(config["encrypted"])
     try:
         if config["encrypted"]:
-            console.wait_for([b"passphrase", b"Passphrase", b"password for", b"Password for"], 300, "LUKS2 unlock prompt")
+            unlock_prompts = [
+                b"Enter passphrase",
+                b"Passphrase for",
+                b"password for",
+                b"Password for",
+                b"password is required",
+            ]
+            console.wait_for(unlock_prompts, 300, "LUKS2 unlock prompt")
             console.clear()
             console.send(WRONG_LUKS_PASSWORD + "\n")
-            console.wait_for([b"No key available", b"Incorrect", b"incorrect", b"Failed to activate", b"passphrase"], 120, "wrong LUKS2 passphrase rejection")
+            rejection = console.wait_for(
+                [b"No key available", b"Incorrect", b"incorrect", b"Failed to activate"],
+                120,
+                "wrong LUKS2 passphrase rejection",
+            )
             wrong_rejected = True
+            console.discard_through(rejection)
+            console.wait_for(unlock_prompts, 120, "LUKS2 retry prompt")
             console.clear()
             console.send(LUKS_PASSWORD + "\n")
         console.wait_for([f"BIFROST_RC_ASSERTIONS_PASSED case={name}".encode()], boot_timeout, "installed-system assertions")

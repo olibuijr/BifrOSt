@@ -41,7 +41,7 @@ The final in-app confirmation repeats the selected disk identity and requires th
 
 | ID | Purpose | 0.2 manifest packages |
 | --- | --- | --- |
-| `base` | Mandatory installed-system base | `btrfs-progs`, `cryptsetup`, `firefox`, `firefox-i18n-is`, `flatpak`, `fwupd`, `gtk4`, `libadwaita`, `linux-firmware`, `networkmanager`, `noto-fonts`, `noto-fonts-emoji`, `pacman-contrib`, `polkit`, `plymouth`, `python-gobject` |
+| `base` | Mandatory installed-system base | `btrfs-progs`, `broadcom-wl`, `cryptsetup`, `firefox`, `firefox-i18n-is`, `flatpak`, `fwupd`, `gtk4`, `libadwaita`, `linux-firmware`, `linux-firmware-marvell`, `networkmanager`, `noto-fonts`, `noto-fonts-emoji`, `pacman-contrib`, `polkit`, `plymouth`, `python-gobject` |
 | `dev-rust` | Rust development | `base-devel`, `clang`, `cmake`, `git`, `just`, `lld`, `ninja`, `rust-analyzer`, `rustup` |
 | `dev-containers` | Container development | `distrobox`, `podman` |
 | `dev-web` | Web development | `base-devel`, `git`, `nodejs`, `npm` |
@@ -76,4 +76,5 @@ If installation fails, do not assume the disk was restored. See [Recovery and lo
 
 - **Secure Boot:** unsupported. BifrOSt 0.2 does not claim a signed Secure Boot chain. Disable Secure Boot to boot or install.
 - **NVIDIA:** proprietary NVIDIA drivers are not bundled or configured by the installer. The live session may rely on the kernel's available open driver and may have limited display support on some GPUs. Do not infer proprietary-driver, hybrid-graphics, suspend, or external-display qualification from a successful live boot. Consult current Arch Linux NVIDIA guidance after installation and test before relying on the machine.
+- **Wi-Fi:** the live and installed systems include Linux's in-tree wireless drivers, Arch's default firmware set, additional Marvell/NXP firmware, and the packaged Broadcom STA driver. Adapters that require an out-of-tree, AUR, or vendor-only driver are not bundled. This broadens device coverage but is not a claim that every Wi-Fi adapter works.
 - **Hardware support:** only rows marked Pass in the release-specific [hardware qualification matrix](hardware-qualification.md) are qualified. Unlisted hardware is untested, not supported by implication.

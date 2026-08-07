@@ -3,6 +3,7 @@
   "id": "base",
   "packages": [
     "btrfs-progs",
+    "broadcom-wl",
     "cryptsetup",
     "firefox",
     "firefox-i18n-is",
@@ -11,6 +12,7 @@
     "gtk4",
     "libadwaita",
     "linux-firmware",
+    "linux-firmware-marvell",
     "networkmanager",
     "noto-fonts",
     "noto-fonts-emoji",
