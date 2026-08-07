@@ -35,8 +35,8 @@ the release commit):
 - `publish-release.py`: immutable O_NOFOLLOW asset staging (validation,
   upload, and re-hash all use the same staged read-only copies); idempotent
   draft-resume that verifies tag target and asset digests, never touching a
-  published release; QEMU evidence must be bound to the producing GitHub
-  workflow run and carry per-case `install_seconds`.
+  published release; QEMU evidence is produced locally, bound to the exact
+  ISO digest, and must carry per-case `install_seconds`.
 - `generate-release-metadata.py`: every cached package archive requires its
   detached signature, verified against the pinned keyring; `.PKGINFO`
   name/version/arch must match the ALPM database record; VALIDSIG is parsed
@@ -50,9 +50,10 @@ the release commit):
   enabling the seed, falling back online with one logged warning. New
   `--require` flag gates release builds.
 - `vm/qemu-release-candidate.py`: per-case install/cold-boot wall times in
-  result.json, workflow-run binding fields, bounded serial-socket drain on all
-  exit paths, `--overall-deadline`; workflow timeout raised above the harness
-  worst case.
+  result.json, bounded serial-socket drain on all exit paths, and an
+  `--overall-deadline` that writes failure evidence before expiry.
+- GitHub Actions removed entirely; validation, qualification, and publication
+  all run locally (`validate-build.py` now rejects a `.github` directory).
 - Live ISO pacman policy: `SigLevel = Required DatabaseRequired`,
   `LocalFileSigLevel = Required`.
 - New regression tests: pacstrap `-K`/keyring wrapper, bifrost-system path

@@ -31,12 +31,6 @@ publisher = load_python("bifrost_publish_release", PUBLISHER_PATH)
 
 REVISION = "ab" * 20
 REPOSITORY = "olibuijr/BifrOSt"
-WORKFLOW = {
-    "path": publisher.QEMU_WORKFLOW_PATH,
-    "run_id": "123456",
-    "head_sha": REVISION,
-    "repository": REPOSITORY,
-}
 
 
 def write_assets(asset_dir: Path, version: str) -> None:
@@ -44,7 +38,7 @@ def write_assets(asset_dir: Path, version: str) -> None:
         (asset_dir / name).write_bytes(f"payload of {name}\n".encode())
 
 
-def evidence_result(version: str, iso: Path, *, workflow=WORKFLOW, install_seconds=41.5):
+def evidence_result(version: str, iso: Path, *, install_seconds=41.5):
     cases = [
         {"case": "standard", "status": "passed"},
         {"case": "luks2", "status": "passed", "wrong_luks_passphrase_rejected": True},
@@ -64,8 +58,6 @@ def evidence_result(version: str, iso: Path, *, workflow=WORKFLOW, install_secon
         },
         "results": cases,
     }
-    if workflow is not None:
-        result["workflow"] = dict(workflow)
     return result
 
 
@@ -152,10 +144,8 @@ class QemuEvidenceTests(unittest.TestCase):
     def write_result(self, result) -> None:
         (self.evidence / "result.json").write_text(json.dumps(result))
 
-    def verify(self, *, allow_local=False):
-        publisher.verify_qemu_evidence(
-            self.evidence, self.version, self.iso, REPOSITORY, REVISION, "tok", allow_local
-        )
+    def verify(self):
+        publisher.verify_qemu_evidence(self.evidence, self.version, self.iso)
 
     def test_missing_install_seconds_is_rejected(self):
         self.write_result(evidence_result(self.version, self.iso, install_seconds=None))
@@ -169,80 +159,10 @@ class QemuEvidenceTests(unittest.TestCase):
             with self.assertRaises(publisher.PublicationError):
                 self.verify()
 
-    def test_missing_workflow_binding_is_rejected_by_default(self):
-        self.write_result(evidence_result(self.version, self.iso, workflow=None))
-        with self.assertRaises(publisher.PublicationError) as caught:
-            self.verify()
-        self.assertIn("workflow identity", str(caught.exception))
-
-    def test_allow_local_qualification_skips_binding_and_logs(self):
-        self.write_result(evidence_result(self.version, self.iso, workflow=None))
-        stderr = io.StringIO()
+    def test_local_evidence_is_accepted_without_workflow_metadata(self):
+        self.write_result(evidence_result(self.version, self.iso))
         with mock.patch.object(publisher, "run", side_effect=AssertionError("no gh calls")):
-            with contextlib.redirect_stderr(stderr):
-                self.verify(allow_local=True)
-        self.assertIn("WARNING", stderr.getvalue())
-        self.assertIn("--allow-local-qualification", stderr.getvalue())
-
-    def test_workflow_binding_verified_via_gh_api(self):
-        self.write_result(evidence_result(self.version, self.iso))
-        api_record = {
-            "id": 123456,
-            "path": publisher.QEMU_WORKFLOW_PATH,
-            "status": "completed",
-            "conclusion": "success",
-            "head_sha": REVISION,
-        }
-        calls = []
-
-        def fake_run(command, **kwargs):
-            calls.append(command)
-            return json.dumps(api_record)
-
-        with mock.patch.object(publisher.shutil, "which", return_value="/usr/bin/gh"):
-            with mock.patch.object(publisher, "run", side_effect=fake_run):
-                self.verify()
-        self.assertEqual(
-            calls, [["gh", "api", f"repos/{REPOSITORY}/actions/runs/123456"]]
-        )
-
-    def test_workflow_binding_rejects_run_mismatches(self):
-        self.write_result(evidence_result(self.version, self.iso))
-        base = {
-            "id": 123456,
-            "path": publisher.QEMU_WORKFLOW_PATH,
-            "status": "completed",
-            "conclusion": "success",
-            "head_sha": REVISION,
-        }
-        for key, value in (
-            ("path", ".github/workflows/other.yml"),
-            ("conclusion", "failure"),
-            ("status", "in_progress"),
-            ("head_sha", "cd" * 20),
-            ("id", 999),
-        ):
-            record = dict(base, **{key: value})
-            with mock.patch.object(publisher.shutil, "which", return_value="/usr/bin/gh"):
-                with mock.patch.object(
-                    publisher, "run", return_value=json.dumps(record)
-                ):
-                    with self.assertRaises(publisher.PublicationError):
-                        self.verify()
-
-    def test_workflow_binding_rejects_local_field_mismatches(self):
-        for key, value in (
-            ("path", ".github/workflows/other.yml"),
-            ("repository", "someone/else"),
-            ("run_id", "not-a-number"),
-            ("run_id", "0"),
-            ("head_sha", "cd" * 20),
-        ):
-            workflow = dict(WORKFLOW, **{key: value})
-            self.write_result(evidence_result(self.version, self.iso, workflow=workflow))
-            with mock.patch.object(publisher, "run", side_effect=AssertionError("no gh calls")):
-                with self.assertRaises(publisher.PublicationError):
-                    self.verify()
+            self.verify()
 
 
 class DraftResumeTests(unittest.TestCase):

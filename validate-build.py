@@ -343,7 +343,6 @@ def validate_release_contract(root: Path) -> None:
 
     generator = (root / "generate-release-metadata.py").read_text(encoding="utf-8")
     publisher = (root / "publish-release.py").read_text(encoding="utf-8")
-    workflow = (root / ".github/workflows/publish-final-release.yml").read_text(encoding="utf-8")
     if "--force" in generator:
         raise ValidationError("release evidence generation must never expose a replacement override")
     for source_name, source in (("metadata generator", generator), ("publisher", publisher)):
@@ -367,7 +366,6 @@ def validate_release_contract(root: Path) -> None:
         "verify_remote_tag",
         "require_publishable_state",
         "stage_release_inputs",
-        "verify_workflow_binding",
         "install_seconds",
         "verify_signature",
         "provenance_status",
@@ -377,10 +375,10 @@ def validate_release_contract(root: Path) -> None:
     )
     if any(token not in publisher for token in required_publication):
         raise ValidationError("release publisher is missing fail-closed identity/evidence checks")
-    if "workflow_dispatch:" not in workflow or "contents: write" not in workflow:
-        raise ValidationError("final release workflow must be operator-dispatched with explicit write permission")
-    if '--signer-fingerprint "${{ inputs.signer_fingerprint }}"' not in workflow:
-        raise ValidationError("final release workflow must pass the operator-trusted signer fingerprint")
+    if (root / ".github").exists():
+        raise ValidationError(
+            "this repository must not carry GitHub Actions workflows; verification runs locally"
+        )
 
 
 def main() -> int:

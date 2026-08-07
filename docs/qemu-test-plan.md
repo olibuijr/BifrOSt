@@ -92,23 +92,20 @@ Each `standard/` or `luks2/` directory contains:
 - `install.qemu.log` and `boot.qemu.log` — QEMU diagnostics; and
 - `result.json` — the case result, wrong-passphrase result, and evidence paths.
 
-The boot serial log includes normalized release/install-state JSON, package versions, retained evidence paths and permissions, and boot-file hashes. Preserve the entire evidence directory on the controlled runner. The GitHub workflow uploads only compact JSON and log evidence; it deliberately does **not** upload the potentially large QCOW2 disks, which remain at the self-hosted runner path printed in the job summary.
+The boot serial log includes normalized release/install-state JSON, package versions, retained evidence paths and permissions, and boot-file hashes. Preserve the entire evidence directory on the controlled qualification machine, including the potentially large QCOW2 disks.
 
-## Manual GitHub execution
+## Execution
 
-The **QEMU release-candidate qualification** workflow is manual-only and targets labels:
-
-```text
-self-hosted, Linux, X64, arch, kvm
-```
-
-GitHub-hosted runners are intentionally excluded because nested virtualization and safe KVM access are not assumed. Place the exact ISO on the runner, then dispatch:
+This repository does not use GitHub Actions; qualification runs locally on a
+controlled machine with KVM access. Place the exact ISO on that machine, then
+run:
 
 ```bash
-gh workflow run qemu-release-candidate.yml \
-  -f iso_path=/srv/bifrost-candidates/bifrost-0.2.1-x86_64.iso \
-  -f case=all \
-  -f work_dir=/srv/bifrost-qemu-evidence/0.2.1-rc1
+python3 vm/qemu-release-candidate.py \
+  --iso /srv/bifrost-candidates/bifrost-<version>-x86_64.iso \
+  --case all \
+  --work-dir /srv/bifrost-qemu-evidence/<version>-rc1 \
+  --overall-deadline 26700
 ```
 
-The runner account must already have read/write access to `/dev/kvm` and write access to the new work-directory parent. Do not run the workflow with `sudo`, do not expose host disks to QEMU, and do not treat a single-case or boot-only result as release qualification.
+The invoking account must already have read/write access to `/dev/kvm` and write access to the new work-directory parent. Do not run the harness with `sudo`, do not expose host disks to QEMU, and do not treat a single-case or boot-only result as release qualification. The publisher consumes the evidence directory directly and requires both cases to have passed with recorded per-case install durations.

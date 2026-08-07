@@ -484,19 +484,6 @@ def run_case(name: str, config: dict[str, object], work_dir: Path, iso: Path, ve
     return result
 
 
-def workflow_binding() -> dict[str, str] | None:
-    """Bind evidence to the exact GitHub Actions run that produced it, when present."""
-    run_id = os.environ.get("GITHUB_RUN_ID")
-    if not run_id:
-        return None
-    return {
-        "path": ".github/workflows/qemu-release-candidate.yml",
-        "run_id": run_id,
-        "head_sha": os.environ.get("GITHUB_SHA", ""),
-        "repository": os.environ.get("GITHUB_REPOSITORY", ""),
-    }
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iso", required=True, type=Path, help="exact release-candidate ISO path (no globbing)")
@@ -548,9 +535,6 @@ def main() -> int:
         },
         "cases": selected,
     }
-    workflow = workflow_binding()
-    if workflow is not None:
-        manifest["workflow"] = workflow
     (work_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     (work_dir / "iso.sha256").write_text(f"{iso_digest}  {iso.name}\n")
     results: list[dict[str, object]] = []

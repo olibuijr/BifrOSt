@@ -24,7 +24,6 @@ VERSION_FILE = ROOT / "VERSION"
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 FINGERPRINT = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-QEMU_WORKFLOW_PATH = ".github/workflows/qemu-release-candidate.yml"
 
 
 class PublicationError(Exception):
@@ -49,14 +48,6 @@ def parse_args() -> argparse.Namespace:
         help="successful exact-ISO standard and LUKS2 qualification evidence",
     )
     parser.add_argument("--notes-file", required=True, type=Path, help="release notes passed unchanged to GitHub")
-    parser.add_argument(
-        "--allow-local-qualification",
-        action="store_true",
-        help=(
-            "accept QEMU evidence without GitHub workflow provenance, for air-gapped "
-            "operation only; logs loudly and is OFF by default"
-        ),
-    )
     return parser.parse_args()
 
 
@@ -471,11 +462,13 @@ def verify_qemu_evidence(
     evidence_dir: Path,
     version: str,
     iso: Path,
-    repository: str,
-    revision: str,
-    token: str,
-    allow_local_qualification: bool,
 ) -> None:
+    """Verify locally produced qualification evidence bound to the exact ISO.
+
+    This repository does not use GitHub Actions; qualification runs on the
+    operator's controlled machine and the evidence is bound to the release
+    through the exact ISO digest and per-case results below.
+    """
     if not evidence_dir.is_dir() or evidence_dir.is_symlink():
         raise PublicationError("--qemu-evidence-dir must be a real directory")
     result = load_json(evidence_dir / "result.json")
@@ -520,67 +513,6 @@ def verify_qemu_evidence(
             )
     if by_case["luks2"].get("wrong_luks_passphrase_rejected") is not True:
         raise PublicationError("QEMU LUKS2 evidence does not prove wrong-passphrase rejection")
-    verify_workflow_binding(result, repository, revision, token, allow_local_qualification)
-
-
-def verify_workflow_binding(
-    result: dict[str, Any],
-    repository: str,
-    revision: str,
-    token: str,
-    allow_local_qualification: bool,
-) -> None:
-    """Bind result.json to the successful GitHub qualification run that produced it."""
-    if allow_local_qualification:
-        for line in (
-            "=" * 72,
-            "WARNING: --allow-local-qualification is enabled.",
-            "WARNING: QEMU evidence is accepted WITHOUT GitHub workflow provenance.",
-            "WARNING: this escape hatch exists only for air-gapped operation.",
-            "=" * 72,
-        ):
-            print(f"publish-release.py: {line}", file=sys.stderr)
-        return
-    binding = result.get("workflow")
-    if not isinstance(binding, dict):
-        raise PublicationError(
-            "QEMU evidence lacks the producing workflow identity; re-run qualification in "
-            "CI or pass --allow-local-qualification for air-gapped operation"
-        )
-    if binding.get("path") != QEMU_WORKFLOW_PATH:
-        raise PublicationError(f"QEMU evidence workflow path must be {QEMU_WORKFLOW_PATH}")
-    if binding.get("repository") != repository:
-        raise PublicationError("QEMU evidence workflow repository does not match --repository")
-    run_id = binding.get("run_id")
-    if isinstance(run_id, str) and run_id.isascii() and run_id.isdigit():
-        run_id = int(run_id)
-    if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id <= 0:
-        raise PublicationError("QEMU evidence workflow run_id must be a positive run identifier")
-    if str(binding.get("head_sha", "")).lower() != revision:
-        raise PublicationError(
-            "QEMU evidence workflow head_sha does not equal the release source revision"
-        )
-    if shutil.which("gh") is None:
-        raise PublicationError("gh is required to verify QEMU qualification provenance")
-    environment = os.environ.copy()
-    environment["GH_TOKEN"] = token
-    raw = run(["gh", "api", f"repos/{repository}/actions/runs/{run_id}"], env=environment)
-    try:
-        record = json.loads(raw)
-    except ValueError as error:
-        raise PublicationError(f"cannot parse qualification workflow run {run_id}: {error}") from error
-    if not isinstance(record, dict) or record.get("id") != run_id:
-        raise PublicationError(f"qualification workflow run {run_id} could not be resolved")
-    if record.get("path") != QEMU_WORKFLOW_PATH:
-        raise PublicationError(
-            f"workflow run {run_id} was not produced by {QEMU_WORKFLOW_PATH}"
-        )
-    if record.get("status") != "completed" or record.get("conclusion") != "success":
-        raise PublicationError(f"workflow run {run_id} did not complete successfully")
-    if str(record.get("head_sha", "")).lower() != revision:
-        raise PublicationError(
-            f"workflow run {run_id} head_sha does not equal the release source revision"
-        )
 
 
 def delete_draft_asset(repository: str, asset: dict[str, Any], token: str) -> None:
@@ -769,10 +701,6 @@ def main() -> int:
                 args.qemu_evidence_dir.resolve(),
                 version,
                 assets[0],
-                repository,
-                revision,
-                token,
-                args.allow_local_qualification,
             )
             publish(repository, tag, staged_notes, assets, revision, token)
         finally:
