@@ -1,8 +1,0 @@
-[Plymouth Theme]
-Name=BifrOSt
-Description=Quiet BifrOSt boot with a smooth progress handoff
-ModuleName=script
-
-[script]
-ImageDir=/usr/share/plymouth/themes/bifrost
-ScriptFile=/usr/share/plymouth/themes/bifrost/bifrost.script

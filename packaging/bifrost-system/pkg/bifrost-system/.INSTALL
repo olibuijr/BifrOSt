@@ -1,7 +1,0 @@
-post_install() {
-    /usr/lib/bifrost-maintenance/apply-branding
-}
-
-post_upgrade() {
-    /usr/lib/bifrost-maintenance/apply-branding
-}
