@@ -10,22 +10,22 @@ BifrOSt is an independent, Icelandic-first developer workstation and live/instal
 
 > ## AÐVÖRUN — VALINN DISKUR EYÐIST
 >
-> BifrOSt 0.2.1 setur aðeins upp á **heilan disk**. Öll disksneiðing og öll gögn á staðfesta markdiskinum verða fjarlægð. Taktu sannreynt afrit og aftengdu diska sem ekki má eyða.
+> BifrOSt 0.2.2 setur aðeins upp á **heilan disk**. Öll disksneiðing og öll gögn á staðfesta markdiskinum verða fjarlægð. Taktu sannreynt afrit og aftengdu diska sem ekki má eyða.
 >
 > ## WARNING — THE SELECTED DISK WILL BE ERASED
 >
-> BifrOSt 0.2.1 performs a **whole-disk installation only**. Every partition and all data on the confirmed target are removed. Make a verified backup and disconnect disks that must not be erased. There is no dual-boot or manual-partitioning path.
+> BifrOSt 0.2.2 performs a **whole-disk installation only**. Every partition and all data on the confirmed target are removed. Make a verified backup and disconnect disks that must not be erased. There is no dual-boot or manual-partitioning path.
 
 ![BifrOSt aurora wallpaper](profile/airootfs/usr/share/backgrounds/bifrost/bifrost-aurora.png)
 
-## 0.2.1 development status
+## 0.2.2 release status
 
-The source version on `main` is **0.2.1**, but no `v0.2.1` GitHub release has been published at this revision. The latest published release is [`v0.2.0`](https://github.com/olibuijr/BifrOSt/releases/tag/v0.2.0). The 0.2.1 development line does not claim physical-hardware qualification, offline completeness, bit-for-bit reproducibility, operating-system rollback, or Secure Boot support. Artifact signing and installed provenance are claimed only where a published release record and independently verified signatures document them; a local candidate or generated checksum is not a published release.
+The source version on `main` is **0.2.2**, released 2026-08-07 as a patch release marked by the signed tag `v0.2.2`. Patch releases ship exclusively through the signed `[bifrost]` pacman repository; no `0.2.2` ISO exists. The latest installation ISO remains [`v0.2.0`](https://github.com/olibuijr/BifrOSt/releases/tag/v0.2.0) — no `v0.2.1` release was ever published — and the next ISO will accompany the `0.3.0` minor release. The 0.2.2 release does not claim physical-hardware qualification, offline completeness, bit-for-bit reproducibility, operating-system rollback, or Secure Boot support. Artifact signing and installed provenance are claimed only where release evidence and independently verified signatures document them; a local candidate or generated checksum is not a published release.
 
 - Installation requires x86_64 UEFI with Secure Boot disabled.
 - Online installation from signed official Arch repositories is the normal mode.
 - Offline mode is shown only when the medium contains a complete signed schema-v2 local source manifest, trusted keyring/repository, and all required package archives, and that source passes pre-wipe validation. A bootable ISO alone is not an offline-completeness claim.
-- The `0.2.1` release-evidence key is tracked at [`keys/bifrost-release-key.asc`](keys/bifrost-release-key.asc). Its primary fingerprint is `A306 D353 7F15 3830 6CB3 A23B 2C4A 6276 8746 EFB6`; authenticate that fingerprint through an independent trusted channel before treating a checksum signature as publisher authentication. Unsigned artifacts are labeled `.unsigned`.
+- The `0.2.2` release-evidence key is tracked at [`keys/bifrost-release-key.asc`](keys/bifrost-release-key.asc). Its primary fingerprint is `B2E0 9853 D23E 5DB6 21C6 123B FC13 D6D6 3D06 E8D2`; authenticate that fingerprint through an independent trusted channel before treating a checksum or tag signature as publisher authentication. Signing keys were rotated on 2026-08-07: tags `v0.2.0` and `v0.2.1` verify only against the previous evidence key preserved in Git history. Unsigned artifacts are labeled `.unsigned`.
 - Physical support is limited to explicit Pass entries in the release's [hardware qualification record](docs/hardware-qualification.md). One user-reported `0.2.0` physical run is recorded as Partial; no full physical-hardware Pass is claimed without the tested ISO digest and completed checklist.
 
 ## Whole-disk safety
@@ -36,7 +36,7 @@ Device paths can change. Never identify a disk by `/dev/sd…` or capacity alone
 
 Read [Installation and safety](docs/install-and-safety.md) before using the installer.
 
-## What the 0.2.1 development source provides
+## What the 0.2.2 source provides
 
 - Icelandic-first installer and desktop, with English available for critical installation, failure, and recovery messages
 - Whole-disk GPT/Btrfs installation with UEFI systemd-boot
@@ -57,7 +57,7 @@ BifrOSt does not replace `pacman`, ship a custom kernel, enable the AUR automati
 
 Open **BifrOSt Update Assistant** from the application menu to install, update, or roll back first-party BifrOSt applications. The assistant trusts only the embedded release key and the pinned repository at `https://olibuijr.github.io/BifrOSt/flatpak/repo/`, accepts only `org.bifrost.*` application IDs, and installs applications per user through Flatpak. It does not update Arch Linux; continue to use a complete `sudo pacman -Syu` transaction for the operating system.
 
-At this source revision, the production catalog contains no application refs, so the assistant's empty state is expected. [`BifrOSt-Apps`](https://github.com/olibuijr/BifrOSt-Apps) provides the generator, the validated template, and the RÚV media player source (`org.bifrost.Ruv`), which is committed there as an unsigned, unpublished review candidate; no end-user application has been published to the trusted catalog yet. The CI-only `org.bifrost.TemplateCheck` identity is never submitted to the trusted catalog.
+At this source revision, the production catalog contains no application refs, so the assistant's empty state is expected. [`BifrOSt-Apps`](https://github.com/olibuijr/BifrOSt-Apps) provides the generator, its two validated templates, and the RÚV media player source (`org.bifrost.Ruv`, version 0.1.1), which is committed there as an unsigned, unpublished review candidate; no end-user application has been published to the trusted catalog yet. The template-validation identity `org.bifrost.TemplateCheck` is denylisted by the dispatcher and never submitted to the trusted catalog.
 
 Rollback returns an application to the most recent different commit recorded before an assistant-managed update. It does not roll back application data, the operating system, or applications installed from other Flatpak remotes. The command-line interface is `bifrost-app-manager`; run it without arguments for the exact `list`, `install`, `update`, `update-all`, and `rollback` syntax.
 
@@ -66,20 +66,33 @@ Release operators dispatch one or more reviewed `.flatpak` bundles with the prot
 ```bash
 python3 dispatch-app-release.py \
   --bundle /absolute/path/to/org.bifrost.Example.flatpak \
+  --candidate-manifest /absolute/path/to/org.bifrost.Example.candidate.json \
   --gpg-key DC91F525DD69C4671E3D3712209E142C2589BD16 \
   --gpg-homedir ~/.local/share/bifrost-release-gnupg \
   --publish
 ```
 
-The dispatcher hashes each input, rejects refs outside the `org.bifrost` namespace, stages rather than mutates the live repository, signs imported commits and repository metadata, then publishes `release/flatpak-repo/` plus `release/bifrost.flatpakrepo` to GitHub Pages. Run without `--publish` to validate and sign locally first. Protect the signing key and obtain the passphrase through the local pinentry prompt; never pass it on the command line.
+The dispatcher hashes each input, admits a bundle only when its reviewed candidate manifest matches (recorded bundle SHA-256, source repository and revision, application ID, branch, and architecture), rejects refs outside the `org.bifrost` namespace, stages rather than mutates the live repository, signs imported commits and repository metadata, then publishes `release/flatpak-repo/` plus `release/bifrost.flatpakrepo` to GitHub Pages. Run without `--publish` to validate and sign locally first. Protect the signing key and obtain the passphrase through the local pinentry prompt; never pass it on the command line.
 
-Application source and Flatpak manifests live in the separate [`olibuijr/BifrOSt-Apps`](https://github.com/olibuijr/BifrOSt-Apps) repository. Its generator creates a functional Python, GTK 4, and Libadwaita application with consistent `org.bifrost.*` identity, bilingual metadata, conservative sandbox permissions, tests, and a Flatpak manifest. Application CI produces unsigned review candidates only; it never receives the protected catalog-signing key or publishes directly to the trusted remote.
+Application source and Flatpak manifests live in the separate [`olibuijr/BifrOSt-Apps`](https://github.com/olibuijr/BifrOSt-Apps) repository. Its generator creates a functional application from either the default GTK template (`--stack gtk`: Python, GTK 4, and Libadwaita) or the Dioxus template (`--stack dioxus`: Rust with Dioxus 0.7 desktop rendered through WebKitGTK), with consistent `org.bifrost.*` identity, bilingual metadata, conservative sandbox permissions, tests, and a Flatpak manifest. Both repositories are CI-free; application validation runs locally and produces unsigned review candidates only. BifrOSt-Apps never receives the protected catalog-signing key or publishes directly to the trusted remote.
 
 This operating-system repository remains the owner of the Update Assistant, embedded application-release public key, namespace admission policy, signed OSTree catalog, and GitHub Pages publication. After reviewing an app candidate from BifrOSt-Apps, release operators use the dispatcher above to sign and publish it. The updater discovers published applications dynamically, so adding an app does not require a hard-coded registry or an OS source change.
 
 ## Signed BifrOSt system package
 
 Fresh installations register the first-party installed-system payload as the `bifrost-system` Arch package. Its narrowly scoped `[bifrost]` repository is configured after the official Arch repositories, requires signed packages and repository databases, and is used only to upgrade the already-installed BifrOSt payload. Kernels, the base system, and other distribution packages remain owned and updated by the official Arch repositories. Apply system maintenance only as a complete `sudo pacman -Syu` transaction; BifrOSt does not support partial upgrades, automatic application, operating-system rollback, or Secure Boot.
+
+Signing keys were rotated on 2026-08-07. Systems installed from 0.2.0 or 0.2.1 media trust only the pre-rotation ALPM key and require a one-time key adoption before the first upgrade (see [STATUS.md](STATUS.md)):
+
+```bash
+curl -fsSLo /tmp/bifrost-key.asc \
+  https://olibuijr.github.io/BifrOSt/alpm/x86_64/alpm-repository-key.asc
+sudo pacman-key --add /tmp/bifrost-key.asc
+sudo pacman-key --lsign-key F5CE992078EA20EA8469A05FC68D23E4208D553F
+sudo pacman -Syu
+```
+
+Confirm the fingerprint through an independent trusted channel before locally signing the key. Fresh 0.3.0+ installation media will carry and locally sign the new key automatically through the installer bootstrap.
 
 Release operators use the tracked [`keys/bifrost-alpm-key.asc`](keys/bifrost-alpm-key.asc), its exact primary fingerprint `F5CE992078EA20EA8469A05FC68D23E4208D553F`, and an isolated GnuPG home containing exactly the corresponding secret key. The tooling never generates or exports private keys. From the repository root, build and locally verify the signed package, signed database, and ISO bootstrap stage:
 
@@ -110,7 +123,7 @@ python3 packaging/alpm/publish-repository.py \
   --publish
 ```
 
-This publishes only `alpm/x86_64` at `https://olibuijr.github.io/BifrOSt/alpm/$arch`; it does not alter the signed Flatpak repository. The signed repository and ISO bootstrap each carry the exact tracked ALPM public key and fingerprint. That internal consistency is authenticated only when the enclosing `0.2.1` ISO or source tag is independently authenticated.
+This publishes only `alpm/x86_64` at `https://olibuijr.github.io/BifrOSt/alpm/$arch`; it does not alter the signed Flatpak repository. The signed repository and ISO bootstrap each carry the exact tracked ALPM public key and fingerprint. That internal consistency is authenticated only when the enclosing source tag (currently `v0.2.2`) or release ISO is independently authenticated.
 
 
 ## Documentation
@@ -125,7 +138,7 @@ This publishes only `alpm/x86_64` at `https://olibuijr.github.io/BifrOSt/alpm/$a
 
 ## Download, verify, and write the USB
 
-At this revision, the [latest published release](https://github.com/olibuijr/BifrOSt/releases/latest) is `v0.2.0`, while `main` targets unreleased `0.2.1`. Select a release explicitly, download its exact x86_64 ISO and every accompanying verification artifact, and use documentation from the matching source tag. For `v0.2.0`, follow its [version-matched verification guide](https://github.com/olibuijr/BifrOSt/blob/v0.2.0/docs/verify-and-write-usb.md). The [verification guide on `main`](docs/verify-and-write-usb.md) documents 0.2.1 candidate names and must not be used to infer filenames or signing status for `v0.2.0`. Patch releases (`0.x.Y`) ship to installed systems through the signed `[bifrost]` pacman repository via a complete `sudo pacman -Syu` transaction; installation ISOs are produced only for minor releases (`0.X.0`).
+The latest installation ISO is [`v0.2.0`](https://github.com/olibuijr/BifrOSt/releases/tag/v0.2.0); no `v0.2.1` release was published, and the current `0.2.2` source release ships without an ISO. Installation ISOs are produced only for minor releases (`0.X.0`) — the next will be `0.3.0` — while patch releases (`0.x.Y`) reach installed systems through the signed `[bifrost]` pacman repository via a complete `sudo pacman -Syu` transaction. Select a release explicitly, download its exact x86_64 ISO and every accompanying verification artifact, and use documentation from the matching source tag. For `v0.2.0`, follow its [version-matched verification guide](https://github.com/olibuijr/BifrOSt/blob/v0.2.0/docs/verify-and-write-usb.md). The [verification guide on `main`](docs/verify-and-write-usb.md) documents current tooling names and the rotated keys and must not be used to infer filenames or signing status for `v0.2.0`.
 
 Prefer an image writer that shows the destination model and capacity, such as KDE ISO Image Writer, GNOME Disks, or Rufus. Imaging erases the entire destination. The command-line guide requires a verified `/dev/disk/by-id/` identity and deliberately does not suggest copying a generic `/dev/sdX`.
 

@@ -14,24 +14,25 @@ Keep the installer, Update Assistant, maintenance utility, welcome utility, priv
 - Never weaken target identity checks, live-media ancestry checks, mounted/active-device checks, minimum-size checks, source readiness, or the final exact-path confirmation.
 - BifrOSt supports complete Arch Linux upgrades through `pacman -Syu`; do not introduce partial-upgrade paths.
 - Do not claim Secure Boot, offline completeness, reproducibility, rollback, or hardware qualification beyond recorded evidence.
-- Private release keys never belong in Git, CI artifacts, command-line arguments, logs, or repository fixtures. Tracked public keys and exact fingerprints are trust inputs; update every embedded and published copy together.
+- Private release keys never belong in Git, command-line arguments, logs, or repository fixtures. Tracked public keys and exact fingerprints are trust inputs; update every embedded and published copy together. Signing keys were rotated on 2026-08-07; the current fingerprints live in `STATUS.md` and the tracked `keys/` files.
 - Preserve the separation between the narrowly scoped BifrOSt ALPM repository and official Arch repositories.
 
 ## Application catalog contract
 
 The Update Assistant discovers signed applications dynamically. It accepts only `org.bifrost.*` applications from the pinned HTTPS repository and embedded application-release key. Do not add a hard-coded application registry.
 
-At the current `main` revision, the production catalog contains no application refs. An empty Update Assistant is therefore correct until a real candidate from BifrOSt-Apps is reviewed, signed, and published. `org.bifrost.TemplateCheck` is an ephemeral CI identity, not a product or catalog candidate. Update this status text when the first real application is published; do not encode the temporary empty state in updater logic.
+At the current `main` revision, the production catalog contains no application refs. An empty Update Assistant is therefore correct until a real candidate from BifrOSt-Apps is reviewed, signed, and published. `org.bifrost.TemplateCheck` is an ephemeral template-validation identity denylisted by the dispatcher, not a product or catalog candidate. Update this status text when the first real application is published; do not encode the temporary empty state in updater logic.
 
-Application development and CI produce unsigned reviewed `.flatpak` candidates in BifrOSt-Apps. Final release operators use `dispatch-app-release.py` here to:
+Application development and local validation produce unsigned reviewed `.flatpak` candidates and per-bundle candidate manifests in BifrOSt-Apps. Final release operators use `dispatch-app-release.py` here to:
 
-1. stage immutable copies and report SHA-256 digests;
-2. reject refs outside the trusted namespace;
-3. import into a staging OSTree repository;
-4. sign commits and repository metadata with the protected key;
-5. publish the catalog consumed by installed BifrOSt systems.
+1. admit each bundle only against its reviewed candidate manifest (matching bundle SHA-256, source repository and revision, app ID, branch, and architecture);
+2. stage immutable copies and report SHA-256 digests;
+3. reject refs outside the trusted namespace;
+4. import into a staging OSTree repository;
+5. sign commits and repository metadata with the protected key;
+6. publish the catalog consumed by installed BifrOSt systems.
 
-Never move the signing key or direct catalog publication into application CI.
+Never move the signing key or direct catalog publication into BifrOSt-Apps. Both repositories are CI-free; all validation, signing, and publication run locally under operator control.
 
 ## Verification
 
@@ -41,6 +42,8 @@ Run the narrowest check that exercises the changed contract, followed by reposit
 python3 -m unittest discover -s tests -v
 python3 validate-build.py
 ```
+
+Both repositories carry no GitHub Actions workflows, and `validate-build.py` rejects a `.github` directory. QEMU release-candidate qualification runs locally per `docs/qemu-test-plan.md` and produces ISO-digest-bound evidence with per-case install durations; `publish-release.py` consumes that evidence directly and stages assets immutably. A verified installer seed (`prepare-installer-cache.py --require`) is mandatory before an ISO build.
 
 For application catalog changes, exercise an actual candidate through a local, non-production repository before publication, then verify list, install, launch, update, and rollback in a BifrOSt VM.
 

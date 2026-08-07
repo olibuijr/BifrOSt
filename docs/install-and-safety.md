@@ -72,6 +72,8 @@ The installer offers Icelandic and English for critical installation messages. T
 
 If installation fails, do not assume the disk was restored. See [Recovery and log collection](recovery.md).
 
+After a successful installation, keep the system current with complete `sudo pacman -Syu` transactions. Patch releases — including the current 0.2.2 — ship through the signed `[bifrost]` pacman repository rather than new ISOs; systems installed from 0.2.0 or 0.2.1 media need the one-time signing-key adoption described in [Verify and write USB media](verify-and-write-usb.md) before their first upgrade.
+
 ## Known platform limits
 
 - **Secure Boot:** unsupported. BifrOSt 0.2 does not claim a signed Secure Boot chain. Disable Secure Boot to boot or install.

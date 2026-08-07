@@ -22,17 +22,17 @@ It refuses to fall back silently when KVM, QEMU, or those images are unavailable
 Name one exact, already-built release-candidate ISO. Do not use a wildcard or a moving symlink:
 
 ```bash
-ISO=/absolute/path/to/bifrost-0.2.1-x86_64.iso
+ISO=/absolute/path/to/bifrost-<version>-x86_64.iso
 python3 vm/qemu-release-candidate.py --iso "$ISO" --case all
 ```
 
-The default evidence root is a newly created mode-`0700` directory below `~/.local/state/bifrost/qemu-rc/`. The command prints its exact path only after both cases pass. For a deterministic CI location, provide a path that does not exist yet:
+The default evidence root is a newly created mode-`0700` directory below `~/.local/state/bifrost/qemu-rc/`. The command prints its exact path only after both cases pass. For a deterministic evidence location, provide a path that does not exist yet:
 
 ```bash
 python3 vm/qemu-release-candidate.py \
-  --iso /srv/bifrost-candidates/bifrost-0.2.1-x86_64.iso \
+  --iso /srv/bifrost-candidates/bifrost-<version>-x86_64.iso \
   --case all \
-  --work-dir /srv/bifrost-qemu-evidence/0.2.1-rc1
+  --work-dir /srv/bifrost-qemu-evidence/<version>-rc1
 ```
 
 `--case standard` and `--case luks2` are useful for diagnosis, but a release candidate is not qualified unless `--case all` passes in one recorded run.

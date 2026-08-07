@@ -2,7 +2,7 @@
 
 This document is the qualification record and per-release template for BifrOSt 0.2. A row is a support claim only when it names a release artifact, exact hardware/firmware, a completed result, and retained evidence. QEMU results do not qualify physical hardware.
 
-**Current source status (`0.2.1`): no final `0.2.1` physical-hardware row has been tested. The historical user-reported `0.2.0` run remains recorded as Partial below; no full physical-hardware Pass is claimed without the exact tested ISO digest and completed checklist.**
+**Current source status (`0.2.2`): 0.2.2 is a patch release delivered only through the signed pacman repository — it produced no ISO, so no physical-hardware qualification is required or claimed for it. No `0.2.1` ISO was ever published, and no `0.2.1` physical-hardware row was tested. The historical user-reported `0.2.0` run remains recorded as Partial below; no full physical-hardware Pass is claimed without the exact tested ISO digest and completed checklist.**
 
 Secure Boot is outside the 0.2 qualification boundary and must remain disabled. Proprietary NVIDIA, hybrid-graphics switching, and NVIDIA external-display paths are also outside the default qualification boundary unless an explicitly named configuration is added and tested.
 
@@ -17,7 +17,8 @@ Secure Boot is outside the 0.2 qualification boundary and must remain disabled. 
 
 | Release | ISO SHA-256 | Firmware mode | Standard install | LUKS2 install | USB-written boot | Evidence | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.2.1 | Pending final artifact | UEFI, Secure Boot off | Not tested | Not tested | Not tested | None | Not tested |
+| 0.2.2 | No ISO produced (patch release; pacman delivery only) | Not applicable | Not applicable | Not applicable | Not applicable | Local QEMU release-pipeline evidence only; QEMU does not qualify hardware | Not required |
+| 0.2.1 | No ISO published | UEFI, Secure Boot off | Not tested | Not tested | Not tested | None | Not tested |
 | 0.2.0 | Not retained for tested media | UEFI, Secure Boot off | Partial | Not tested | Partial | User report and locally inspected system identity | Partial |
 
 ## Reported 0.2.0 physical run
@@ -35,12 +36,12 @@ Duplicate rows as needed. Record exact identifiers rather than only “Intel lap
 | Release | System/vendor model | BIOS/UEFI version | CPU | GPU + driver | Network device + driver | Target bus/model/firmware | Install mode | Result | Evidence/issue |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 0.2.0 | Lenovo ThinkPad T14 Gen 4 (`21HES0BG00`) | `N3QET48W` 1.48; UEFI, Secure Boot disabled | Intel Core i5-1345U | Intel Iris Xe (`8086:a7a1`), `i915` | Intel CNVi Wi-Fi (`8086:51f1`), `iwlwifi`; Intel I219-LM Ethernet (`8086:0dc5`), `e1000e` | NVMe, WD PC SN740 512 GB | Standard | Partial | User-reported working PC installation and USB; tested-media SHA-256 and detailed checklist not retained |
-| 0.2.1 | Lenovo ThinkPad T14 Gen 4 (`21HES0BG00`) | `N3QET48W` 1.48; UEFI, Secure Boot disabled | Intel Core i5-1345U | Intel Iris Xe (`8086:a7a1`), `i915` | Intel CNVi Wi-Fi (`8086:51f1`), `iwlwifi`; Intel I219-LM Ethernet (`8086:0dc5`), `e1000e` | NVMe, WD PC SN740 512 GB | Standard | Not tested | Final `0.2.1` artifact has not been physically installed |
-| 0.2.1 | Not recorded | Not recorded | AMD class | AMD graphics class | AMD/MediaTek Wi-Fi class | NVMe class | LUKS2 | Not tested | None |
-| 0.2.1 | Not recorded | Not recorded | Any | Any | Ethernet class | SATA SSD class | Standard | Not tested | None |
-| 0.2.1 | Not recorded | Not recorded | Any | Any | Broadcom Wi-Fi class | Internal disk | Standard | Not tested | None |
-| 0.2.1 | Not recorded | Not recorded | Any | Any | Any | USB-attached target class | Standard | Not tested | None |
-| 0.2.1 | Not recorded | Not recorded | Any | NVIDIA, open driver | Any | Internal disk | Standard | Not tested | None |
+| 0.2.1 | Lenovo ThinkPad T14 Gen 4 (`21HES0BG00`) | `N3QET48W` 1.48; UEFI, Secure Boot disabled | Intel Core i5-1345U | Intel Iris Xe (`8086:a7a1`), `i915` | Intel CNVi Wi-Fi (`8086:51f1`), `iwlwifi`; Intel I219-LM Ethernet (`8086:0dc5`), `e1000e` | NVMe, WD PC SN740 512 GB | Standard | Not tested | No `0.2.1` ISO was published or physically installed |
+| 0.3.0 (next ISO) | Not recorded | Not recorded | AMD class | AMD graphics class | AMD/MediaTek Wi-Fi class | NVMe class | LUKS2 | Not tested | None |
+| 0.3.0 (next ISO) | Not recorded | Not recorded | Any | Any | Ethernet class | SATA SSD class | Standard | Not tested | None |
+| 0.3.0 (next ISO) | Not recorded | Not recorded | Any | Any | Broadcom Wi-Fi class | Internal disk | Standard | Not tested | None |
+| 0.3.0 (next ISO) | Not recorded | Not recorded | Any | Any | Any | USB-attached target class | Standard | Not tested | None |
+| 0.3.0 (next ISO) | Not recorded | Not recorded | Any | NVIDIA, open driver | Any | Internal disk | Standard | Not tested | None |
 
 The Broadcom and NVIDIA rows are deliberate caveat probes, not support claims. A failure or Not tested result must remain visible in release notes.
 
@@ -76,7 +77,7 @@ Record Pass/Fail/Not tested and an evidence reference for each item:
 ## Evidence record template
 
 ```text
-Release: 0.2.1
+Release:
 ISO filename:
 ISO SHA-256:
 Checksum signature: verified / unsigned / not checked
