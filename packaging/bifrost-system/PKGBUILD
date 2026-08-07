@@ -1,7 +1,7 @@
 # Maintainer: BifrOSt release engineering
 pkgname=bifrost-system
 pkgver="$(<../../VERSION)"
-pkgrel=7
+pkgrel=8
 pkgdesc="BifrOSt system integration and first-party maintenance payload"
 arch=('any')
 url='https://github.com/olibuijr/BifrOSt'

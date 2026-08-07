@@ -256,10 +256,24 @@ def validate_profile(root: Path) -> None:
         raise ValidationError("os-release display metadata does not contain the canonical version")
 
     live_packages = read_package_names(root / "profile/packages.x86_64")
-    required_live = {"archinstall", "cosmic", "gtk4", "linux", "linux-firmware", "networkmanager", "python-gobject"}
+    required_live = {"archinstall", "cosmic", "gtk4", "linux", "networkmanager", "python-gobject"}
     missing = sorted(required_live - live_packages)
     if missing:
         raise ValidationError(f"profile package list is missing: {', '.join(missing)}")
+    split_firmware = {
+        "linux-firmware-amdgpu",
+        "linux-firmware-atheros",
+        "linux-firmware-broadcom",
+        "linux-firmware-cirrus",
+        "linux-firmware-intel",
+        "linux-firmware-marvell",
+        "linux-firmware-mediatek",
+        "linux-firmware-other",
+        "linux-firmware-radeon",
+        "linux-firmware-realtek",
+    }
+    if "linux-firmware" not in live_packages and not split_firmware.issubset(live_packages):
+        raise ValidationError("profile must include linux-firmware or the complete supported split firmware set")
     bootstrap = read_package_names(root / "profile/bootstrap_packages")
     if not {"arch-install-scripts", "base"}.issubset(bootstrap):
         raise ValidationError("bootstrap package list must include arch-install-scripts and base")
