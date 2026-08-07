@@ -81,7 +81,7 @@ This operating-system repository remains the owner of the Update Assistant, embe
 
 Fresh installations register the first-party installed-system payload as the `bifrost-system` Arch package. Its narrowly scoped `[bifrost]` repository is configured after the official Arch repositories, requires signed packages and repository databases, and is used only to upgrade the already-installed BifrOSt payload. Kernels, the base system, and other distribution packages remain owned and updated by the official Arch repositories. Apply system maintenance only as a complete `sudo pacman -Syu` transaction; BifrOSt does not support partial upgrades, automatic application, operating-system rollback, or Secure Boot.
 
-Release operators use the tracked [`keys/bifrost-alpm-key.asc`](keys/bifrost-alpm-key.asc), its exact primary fingerprint `69D95C1EA4E97AB5FB9580AAFED54F3B9691E1C2`, and an isolated GnuPG home containing exactly the corresponding secret key. The tooling never generates or exports private keys. From the repository root, build and locally verify the signed package, signed database, and ISO bootstrap stage:
+Release operators use the tracked [`keys/bifrost-alpm-key.asc`](keys/bifrost-alpm-key.asc), its exact primary fingerprint `F5CE992078EA20EA8469A05FC68D23E4208D553F`, and an isolated GnuPG home containing exactly the corresponding secret key. The tooling never generates or exports private keys. From the repository root, build and locally verify the signed package, signed database, and ISO bootstrap stage:
 
 ```bash
 ./generate-release-metadata.py \
@@ -91,12 +91,12 @@ Release operators use the tracked [`keys/bifrost-alpm-key.asc`](keys/bifrost-alp
 
 python3 packaging/alpm/build-repository.py \
   --gpg-homedir /absolute/path/to/isolated-alpm-gnupg \
-  --fingerprint 69D95C1EA4E97AB5FB9580AAFED54F3B9691E1C2 \
+  --fingerprint F5CE992078EA20EA8469A05FC68D23E4208D553F \
   --public-key keys/bifrost-alpm-key.asc
 
 python3 packaging/alpm/publish-repository.py \
   --stage release/alpm/x86_64 \
-  --fingerprint 69D95C1EA4E97AB5FB9580AAFED54F3B9691E1C2 \
+  --fingerprint F5CE992078EA20EA8469A05FC68D23E4208D553F \
   --public-key keys/bifrost-alpm-key.asc
 ```
 
@@ -105,7 +105,7 @@ The build reads the upstream package version from `VERSION` and the positive pac
 ```bash
 python3 packaging/alpm/publish-repository.py \
   --stage release/alpm/x86_64 \
-  --fingerprint 69D95C1EA4E97AB5FB9580AAFED54F3B9691E1C2 \
+  --fingerprint F5CE992078EA20EA8469A05FC68D23E4208D553F \
   --public-key keys/bifrost-alpm-key.asc \
   --publish
 ```

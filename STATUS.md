@@ -61,24 +61,34 @@ the release commit):
   verification, dispatch admission, provenance, publish staging.
 - `profile/airootfs/usr/share/bifrost/os-release` bumped to 0.2.2.
 
-## Remaining steps (blocked on the signing card)
+## Signing keys (rotated 2026-08-07)
 
-Both protected keys live on the OpenPGP card, which is **not connected**
-(`gpg --card-status`: no device). Do not weaken verification or substitute
-keys. With the card connected:
+The previous card-held keys (`A306…EFB6` evidence, `69D9…E1C2` ALPM) were
+retired with operator authorization because the card is unavailable. New
+passphrase-protected keys were generated in isolated GnuPG homedirs under
+`~/.local/state/bifrost-release/`:
 
-1. Commit the working tree as the 0.2.2 release commit and create the signed
-   annotated tag `v0.2.2` with the release evidence key
-   `A306D3537F1538306CB3A23B2C4A62768746EFB6`.
-2. Build and sign the package and repository with
-   `packaging/alpm/build-repository.py` using the ALPM key
-   `69D95C1EA4E97AB5FB9580AAFED54F3B9691E1C2` in an isolated GnuPG homedir
-   (the script refuses the personal homedir).
-3. Publish the staged repository to the `gh-pages` `alpm/x86_64` path consumed
-   by installed systems.
-4. Verify on an installed 0.2.1 system (or chroot) that a complete
-   `sudo pacman -Syu` installs `bifrost-system 0.2.2-1` with valid package and
-   database signatures.
+- Release evidence (tag signing): `B2E09853D23E5DB621C6123BFC13D6D63D06E8D2`
+- ALPM packages/repository: `F5CE992078EA20EA8469A05FC68D23E4208D553F`
 
-No USB has been written and no physical installation has been performed for
-0.2.2; none is required for a patch release.
+`keys/bifrost-release-key.asc`, `keys/bifrost-alpm-key.asc`, the pinned
+`ALPM_PRIMARY_FINGERPRINT`, and the README commands reference the new keys.
+Tags signed with the old evidence key (`v0.2.0`, `v0.2.1`) verify only against
+the old public key preserved in Git history.
+
+## Rollout to installed systems
+
+Systems installed from 0.2.0/0.2.1 media trust only the old ALPM key, so a
+one-time key adoption is required before the upgrade:
+
+```bash
+curl -fsSLo /tmp/bifrost-key.asc \
+  https://olibuijr.github.io/BifrOSt/alpm/x86_64/alpm-repository-key.asc
+sudo pacman-key --add /tmp/bifrost-key.asc
+sudo pacman-key --lsign-key F5CE992078EA20EA8469A05FC68D23E4208D553F
+sudo pacman -Syu
+```
+
+Fresh 0.3.0+ media will carry and lsign the new key automatically through the
+installer bootstrap. No USB has been written and no physical installation has
+been performed for 0.2.2; none is required for a patch release.

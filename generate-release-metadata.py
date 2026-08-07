@@ -28,7 +28,7 @@ RELEASE_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[
 TAG_NAME = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 PACKAGE_ARCHIVE_SUFFIXES = ("zst", "xz", "gz", "bz2", "lrz", "lzo", "Z")
 ALPM_PUBLIC_KEY = ROOT / "keys" / "bifrost-alpm-key.asc"
-ALPM_PRIMARY_FINGERPRINT = "69d95c1ea4e97ab5fb9580aafed54f3b9691e1c2"
+ALPM_PRIMARY_FINGERPRINT = "f5ce992078ea20ea8469a05fc68d23e4208d553f"
 BIFROST_REPOSITORY_PACKAGES = frozenset({"bifrost-system"})
 ARCHLINUX_KEYRING_RELATIVE = Path("usr/share/pacman/keyrings/archlinux.gpg")
 
